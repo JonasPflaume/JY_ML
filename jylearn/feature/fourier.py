@@ -5,7 +5,7 @@ class FourierBases:
     def __init__(self, degree=1):
         self.degree = degree
         
-    def fit_transform(self, X):
+    def __call__(self, X):
         ''' check if the first entry is 1
             Then conduct the sin cos expansion
         '''

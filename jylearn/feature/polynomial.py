@@ -6,7 +6,7 @@ class PolynomialFT:
         self.degree = degree
         self.poly = PolynomialFeatures(degree)
         
-    def fit_transform(self, X):
+    def __call__(self, X):
         ''' check if the first entry is 1
             Then conduct the polynomial expansion
         '''
