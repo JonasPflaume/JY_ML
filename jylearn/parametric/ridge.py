@@ -1,5 +1,5 @@
 import torch
-from jylearn.linear.regression import Regression
+from jylearn.parametric.regression import Regression
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
