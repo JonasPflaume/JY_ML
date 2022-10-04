@@ -2,8 +2,8 @@ import sys
 from setuptools import find_packages, setup, Command
 
 # Package Metadata
-NAME = "jylearn"
-DESCRIPTION = "jiayun's machine learning package"
+NAME = "jylc"
+DESCRIPTION = "jiayun's machine learning & control packages"
 URL = ""
 EMAIL = "li.jiayun@outlook.com"
 AUTHOR = "Jiayun Li"
@@ -21,7 +21,7 @@ setup(
     author=AUTHOR,
     author_email=EMAIL,
     url=URL,
-    packages=["jylearn"],
+    packages=["jylearn", "jycontrol"],
     install_requires=REQUIRED,
     include_package_data=True,
     license=""
