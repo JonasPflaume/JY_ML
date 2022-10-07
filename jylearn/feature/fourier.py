@@ -1,5 +1,4 @@
 import numpy as np
-from sklearn.preprocessing import PolynomialFeatures
 
 class FourierBases:
     def __init__(self, degree=1):

@@ -1,6 +1,8 @@
 import torch as th
 import torch.nn as nn
 
+# TODO wrap the network into the regression class, fit function should include the hyperparameters optimisation.
+
 class MLP(nn.Module):
     ''' w1 -> w2 -> w3: three layers
         hyperparameter is designed to be optimized by bayesian optimization
