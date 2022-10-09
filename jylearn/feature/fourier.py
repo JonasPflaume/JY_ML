@@ -9,7 +9,8 @@ class FourierBases:
             Then conduct the sin cos expansion
         '''
         if np.all( X[:,0]==1. ):
-            X_aug = X[:,1:]
+            X_aug = X.copy()
+            X = X[:,1:]
         else:
             X_aug = np.concatenate([np.ones([X.shape[0],1], dtype='f'), X], axis=1)
         

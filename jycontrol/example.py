@@ -2,7 +2,7 @@ import gym
 import time
 import numpy as np
 import casadi as cs
-from jycontrol.ilqr.ilqr import ILQR
+from jycontrol.ilqr import ILQR
 
 
 env = gym.make('Pendulum-v1', g=9.81)
