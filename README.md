@@ -10,7 +10,7 @@ Finished projects:
 | MLP      | 1.469      |
 | ... |       |
 #### Control  
-| Approach        | Mean reward (50 runs) |
-| ------------- |:-------------:|
-| iLQR      | -4.76 |
-| ...| |
+| Approach        | Reward Mean (50 runs) | Reward Variance|
+| ------------- |:-------------:|:-------------:|
+| iLQR      | -305.57 |   38239.82    |
+| ...| | |
