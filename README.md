@@ -1,4 +1,16 @@
-JY's machine learning and control workspace  
+### JY's machine learning and control workspace, 
+The **SARCOS** dataset, which is intended for a regression problem of robot inverse dynamics, is regarded as the benchmark of ML.  
+The gym **pendulum** environment is chosen to be the benchmark of control project.
   
-The statistical learning methods are implemented by pytorch,  
-to utilize the SGD and GPU acceleration for some learning methods, e.g. stochastic variational GPR
+Finished projects:
+#### Machine learning  
+| Approach      | MSE           |
+| ------------- |:-------------:|
+| Ridge + feature      | 1.469 |
+| MLP      | 2.207      |
+| ... |       |
+#### Control  
+| Approach        | Mean reward |
+| ------------- |:-------------:|
+| iLQR      |  |
+| ...| |
