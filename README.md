@@ -16,4 +16,4 @@ Finished functions:
 | SAC | -144.04 | 8377.89 |
 | ...| | |
 
-In SAC(soft actor-critic) the reinforcement learning package stablebaseline3 was used. The training ran for 50k timesteps, to a convergence of the epi reward.
+In SAC(soft actor-critic) the reinforcement learning package stablebaseline3 was used to compared with various control strategies. The training ran for 50k timesteps, to a convergence of the epi reward.
