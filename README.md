@@ -13,4 +13,6 @@ Finished projects:
 | Approach        | Reward Mean (50 runs) | Reward Variance|
 | ------------- |:-------------:|:-------------:|
 | iLQR      | -305.57 |   38239.82    |
+| SAC | -144.04 | 8377.89 |
 | ...| | |
+In SAC(soft actor-critic) the reinforcement learning package stablebaseline3 was used. The training ran for 50k timesteps, to a convergence of the epi reward.
