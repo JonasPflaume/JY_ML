@@ -16,4 +16,4 @@ Finished functions:
 | SAC | -144.04 | 8377.89 |
 | ...| | |
 
-In SAC(soft actor-critic) the reinforcement learning package stablebaseline3 was used to compared with various control strategies. The training ran for 50k timesteps, to a convergence of the epi reward.
+Note: In SAC(soft actor-critic) the reinforcement learning package stablebaseline3 was used to compare with various control strategies. The training ran for 50k timesteps, to a convergence of the epi reward. The cost matrices in iLQR are troublesome to tune by hand. Therefore, its performance is just ok, but no problem to swing up and stabilize.
