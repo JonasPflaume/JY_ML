@@ -6,8 +6,8 @@ Finished projects:
 #### Machine learning  
 | Approach      | MSE           |
 | ------------- |:-------------:|
-| Ridge + feature      | 1.469 |
-| MLP      | 2.207      |
+| Ridge + feature      | 2.207 |
+| MLP      | 1.469      |
 | ... |       |
 #### Control  
 | Approach        | Mean reward |
