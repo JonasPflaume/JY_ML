@@ -11,6 +11,7 @@ class ILQR:
         self.Q, self.R, self.Qf = Q, R, Qf
         self.target = target
         self.tolerance = 1e-2
+        self.max_iter = 100
         
     def plan(self, x0):
         ''' planning main loop
@@ -20,10 +21,10 @@ class ILQR:
         delta_u = np.ones_like(u0)
 
         counter = 0
-        while np.all( np.linalg.norm( delta_u , axis=1) > self.tolerance ):
+        while np.all( np.linalg.norm( delta_u , axis=1) > self.tolerance ) and counter < self.max_iter:
             
             counter += 1
-            print("The {}. iteration ...".format(counter))
+            # print("The {}. iteration ...".format(counter))
             
             delta_u = self.step(traj, l_sys, u0)
             
@@ -98,17 +99,32 @@ class ILQR:
 
 if __name__ == "__main__":
     from jycontrol.system import Pendulum
-    import time
-    sys = Pendulum()
-    Qf = np.eye(2)
-    Q = np.eye(2) * 0
-    R = np.eye(1) * 1e-2
-    target = np.zeros(2)
-    planner = ILQR(sys, 29, Q, R, Qf, target)
-    x0 = sys.x
-    traj, u = planner.plan(x0)
+    from tqdm import tqdm
     
-    for i in range(4000):
-        sys.step(u[0], render=True)
+    rewards = []
+    for round in tqdm(range(50)):
+        print(round)
+        sys = Pendulum()
+        Qf = np.eye(2)
+        Q = np.eye(2) * 0 # no stage cost of states
+        R = np.eye(1) * 1e-2
+        target = np.zeros(2)
+        planner = ILQR(sys, 29, Q, R, Qf, target)
         x0 = sys.x
         traj, u = planner.plan(x0)
+
+        done = False
+        rewards.append([])
+        while not done:
+            reward, done  = sys.step(u[0], render=False)
+            rewards[-1].append(reward)
+            x0 = sys.x
+            traj, u = planner.plan(x0)
+            
+    epi_rewards = np.array([sum(elem) for elem in rewards])
+    mean_reward = epi_rewards.mean()
+    var_reward = epi_rewards.var()
+    plt.boxplot(epi_rewards)
+    plt.show()
+    print("Mean episode reward: %.2f" % mean_reward, "Var episode reward: %.2f" % var_reward)
+    

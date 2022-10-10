@@ -88,10 +88,11 @@ class Pendulum:
     def step(self, ut, render=False):
         ''' step action in the physical system
         '''
-        _ = self.physical_sys.step(ut)
+        obs, rewards, dones, info = self.physical_sys.step(ut)
         self.x = self.physical_sys.state
         if render:
             self.physical_sys.render()
+        return rewards, dones
             
     def step_openloop(self, xt, ut):
         ''' conduct the open loop simulation
