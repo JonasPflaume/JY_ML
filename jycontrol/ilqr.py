@@ -115,7 +115,7 @@ if __name__ == "__main__":
         done = False
         rewards.append([])
         while not done:
-            reward, done  = sys.step(u[0], render=False)
+            curr_x, reward, done  = sys.step(u[0], render=False)
             rewards[-1].append(reward)
             x0 = sys.x
             traj, u = planner.plan(x0)

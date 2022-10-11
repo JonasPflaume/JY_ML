@@ -1,28 +1,6 @@
 import numpy as np
 import gym
 import casadi as cs
-from scipy.linalg import expm
-
-def integrate_RK4(x_expr, u_expr, xdot_expr, dt, N_steps=1):
-
-    h = dt/N_steps
-
-    x_end = x_expr
-
-    xdot_fun = cs.Function('xdot', [x_expr, u_expr], [xdot_expr])
-
-    for _ in range(N_steps):
-
-        k_1 = xdot_fun(x_end, u_expr)
-        k_2 = xdot_fun(x_end + 0.5 * h * k_1, u_expr) 
-        k_3 = xdot_fun(x_end + 0.5 * h * k_2, u_expr)
-        k_4 = xdot_fun(x_end + k_3 * h, u_expr)
-
-        x_end = x_end + (1/6) * (k_1 + 2 * k_2 + 2 * k_3 + k_4) * h
-    
-    F_expr = x_end
-
-    return F_expr
 
 class Pendulum:
     ''' Class designed for classical control tests
@@ -48,9 +26,9 @@ class Pendulum:
         self.nu = 1
 
         self.continuous_nls, self.continuous_ls \
-            = self.__init_nonlinear_sys()
+            = self.__init_sys()
         
-    def __init_nonlinear_sys(self):
+    def __init_sys(self):
         x = cs.SX.sym("x", 2)
         u = cs.SX.sym("u", 1)
         x1dot = x[1]
@@ -58,22 +36,55 @@ class Pendulum:
         f = cs.vertcat(x1dot, x2dot)
         f_func = cs.Function("f_func", [x, u], [f])
         nl_sys = {'f': f_func}
-        
+        self.system_expr = {'xdot':f, 'x':x, 'u':u}
         # init the ode integrator
         ode = {'x': x, 'ode': f, 'p': u}
         opts = {'tf': self.dt}
         self.ode_solver = cs.integrator('F', 'idas', ode, opts)
         
-        x_p = integrate_RK4(x, u, f, self.dt, N_steps=3)
-        self.RK4_step_func = cs.Function("RK4", [x, u], [x_p])
+        x_p = Pendulum.integrate_RK4(x, u, f, self.dt, N_steps=3)
         
         A = cs.jacobian(x_p, x)
         B = cs.jacobian(x_p, u)
 
         A_func = cs.Function('A_func', [x, u], [A])
-        B_func = cs.Function('B_func', [x, u], [B])
+        B_func = cs.Function('B_func', [x, u], [B]) # residual states linear system
         l_sys = {'A_func':A_func, 'B_func':B_func}
         return nl_sys, l_sys
+    
+    @staticmethod
+    def integrate_RK4(x_expr, u_expr, xdot_expr, dt, N_steps=1):
+
+        h = dt/N_steps
+
+        x_end = x_expr
+
+        xdot_fun = cs.Function('xdot', [x_expr, u_expr], [xdot_expr])
+
+        for _ in range(N_steps):
+
+            k_1 = xdot_fun(x_end, u_expr)
+            k_2 = xdot_fun(x_end + 0.5 * h * k_1, u_expr) 
+            k_3 = xdot_fun(x_end + 0.5 * h * k_2, u_expr)
+            k_4 = xdot_fun(x_end + k_3 * h, u_expr)
+
+            x_end = x_end + (1/6) * (k_1 + 2 * k_2 + 2 * k_3 + k_4) * h
+        
+        F_expr = x_end
+
+        return F_expr
+    
+    @property
+    def xdot(self):
+        return self.system_expr.get('xdot')
+    
+    @property
+    def x_sym(self):
+        return self.system_expr.get('x')
+    
+    @property
+    def u_sym(self):
+        return self.system_expr.get('u')
     
     def get_discrete_sys(self, x0:np.ndarray, u0:np.ndarray):
         ''' get the discrete time system use the linearized system at point x
@@ -92,7 +103,7 @@ class Pendulum:
         self.x = self.physical_sys.state
         if render:
             self.physical_sys.render()
-        return rewards, dones
+        return self.x, rewards, dones
             
     def step_openloop(self, xt, ut):
         ''' conduct the open loop simulation
@@ -102,5 +113,16 @@ class Pendulum:
         xt_p = x_next.full()
         return xt_p
     
-    def step_RK4(self, xt, ut):
-        return self.RK4_step_func(xt, ut).full()
+    def reset(self):
+        self.physical_sys = gym.make("Pendulum-v1", g=9.81)
+        obs = self.physical_sys.reset()
+        self.x = self.physical_sys.state # init the state
+        
+        self.continuous_nls, self.continuous_ls \
+            = self.__init_sys()
+    
+    def get_edmdc_sys(self,):
+        ''' get a global linear system with
+            extended dynamic mode decomposition
+        '''
+        
