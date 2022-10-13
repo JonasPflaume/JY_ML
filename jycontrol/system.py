@@ -1,6 +1,7 @@
 import numpy as np
 import gym
 import casadi as cs
+import os
 
 class Pendulum:
     ''' Class designed for classical control tests
@@ -21,7 +22,7 @@ class Pendulum:
         self.g = 9.81
         self.m = 1.0
         self.l = 1.0
-        
+        self.J = 1/3 * self.m * self.l ** 2
         self.nx = 2
         self.nu = 1
 
@@ -29,6 +30,8 @@ class Pendulum:
             = self.__init_sys()
         
     def __init_sys(self):
+        ''' initialize the pendulum system
+        '''
         x = cs.SX.sym("x", 2)
         u = cs.SX.sym("u", 1)
         x1dot = x[1]
@@ -42,7 +45,8 @@ class Pendulum:
         opts = {'tf': self.dt}
         self.ode_solver = cs.integrator('F', 'idas', ode, opts)
         
-        x_p = Pendulum.integrate_RK4(x, u, f, self.dt, N_steps=3)
+        x_p = Pendulum.integrate_RK4(x, u, f, self.dt, N_steps=1)
+        self.x_next_rk4 = x_p
         
         A = cs.jacobian(x_p, x)
         B = cs.jacobian(x_p, u)
@@ -54,7 +58,8 @@ class Pendulum:
     
     @staticmethod
     def integrate_RK4(x_expr, u_expr, xdot_expr, dt, N_steps=1):
-
+        ''' implementation of Runge Kutta 4th order method
+        '''
         h = dt/N_steps
 
         x_end = x_expr
@@ -76,15 +81,29 @@ class Pendulum:
     
     @property
     def xdot(self):
+        ''' get the casadi expression of xdot
+        '''
         return self.system_expr.get('xdot')
     
     @property
     def x_sym(self):
+        ''' get the casadi expression of x
+        '''
         return self.system_expr.get('x')
     
     @property
     def u_sym(self):
+        ''' get the casadi expression of u
+        '''
         return self.system_expr.get('u')
+    
+    @property
+    def x_next_rk4(self):
+        return self.__x_next_rk4
+    
+    @x_next_rk4.setter
+    def x_next_rk4(self, x):
+        self.__x_next_rk4 = x
     
     def get_discrete_sys(self, x0:np.ndarray, u0:np.ndarray):
         ''' get the discrete time system use the linearized system at point x
@@ -121,8 +140,41 @@ class Pendulum:
         self.continuous_nls, self.continuous_ls \
             = self.__init_sys()
     
-    def get_edmdc_sys(self,):
+    def get_edmdc_sys(self):
         ''' get a global linear system with
             extended dynamic mode decomposition
         '''
+        from jylearn.feature.bellcurve import BellCurve
+        path = os.path.dirname(os.path.realpath(__file__))
+        A, B, C = np.load(path+"/models/pendulum/A.npy"), np.load(path+"/models/pendulum/B.npy"),\
+            np.load(path+"/models/pendulum/C.npy")
+        bellcurve_hyperparam = np.load(path+"/models/pendulum/bellcurve.npy")
         
+        feature = BellCurve(l=1.)
+        feature.set(bellcurve_hyperparam)
+        
+        return A, B, C, feature
+    
+
+if __name__ == "__main__":
+    # check the RK4
+    p = Pendulum()
+    rk4 = p.x_next_rk4
+    func = cs.Function("next", [p.x_sym, p.u_sym], [rk4])
+
+    Xres = []
+    Xres_rk4 = []
+    x0 = p.x
+    x0_rk4 = x0.copy()
+    for i in range(100):
+        x0 = p.step_openloop(x0, 1.)
+        Xres.append(x0.reshape(1,-1))
+        x0_rk4 = func(x0_rk4, 1.).full()
+        Xres_rk4.append(x0_rk4.reshape(1,-1))
+    Xres = np.concatenate(Xres)
+    Xres_rk4 = np.concatenate(Xres_rk4)
+    import matplotlib.pyplot as plt
+    plt.plot(Xres, '-r')
+    plt.plot(Xres_rk4, '-.b')
+    plt.show()
+            

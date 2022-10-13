@@ -1,5 +1,4 @@
-from cProfile import label
-from re import I
+
 import numpy as np
 
 class DMDc:
@@ -53,7 +52,7 @@ class DMDc:
     def __data_from_rollouts(self, X_l, U_l):
         X, Y = X_l[0][:-1,:], X_l[0][1:,:]
         X_f, Y_f = self.feature_transform(X), self.feature_transform(Y)
-        U = np.concatenate( U_l )
+        U = U_l[0]
         for k in range(1, len(X_l)):
             Xk, Yk = X_l[k][:-1,:], X_l[k][1:,:]
             X = np.concatenate([X, Xk])
@@ -62,6 +61,7 @@ class DMDc:
             Yk_f = self.feature_transform(Yk)
             X_f = np.concatenate([X_f, Xk_f])
             Y_f = np.concatenate([Y_f, Yk_f])
+            U = np.concatenate([U, U_l[k]])
         return X, Y, X_f, Y_f, U
     
     def predict(self, x, u):
@@ -100,25 +100,38 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     from jylearn.timeseries.utils import collect_rollouts
     from jycontrol.system import Pendulum
-    from jylearn.feature.polynomial import PolynomialFT
-    from jylearn.feature.fourier import FourierBases
+    from jylearn.feature.bellcurve import BellCurve
     from collections import OrderedDict
+    from itertools import product
+    import pickle
     
     p = Pendulum()
-    f1 = PolynomialFT(4)
-    f2 = FourierBases(1) # the pendulum ode contains sin cos terms!
     
-    f_l = [f2, f1]
+    dis_dim = 15
+    x1 = np.linspace(-3.*np.pi, 3.*np.pi, dis_dim)
+    x2 = np.linspace(-8, 8, dis_dim)
+    X_sub = np.concatenate(list(product(x1, x2)) ).reshape(-1, 2)
+    order = dis_dim ** 2
+    f1 = BellCurve(order, l=1.)
     
-    # 250 trajs, each has 200 steps.
+    f1.set(X_sub)
+    
+    f_l = [f1]
+    
+    # 500 trajs, each has 200 steps.
     # This is designed to has the same env quiries with RL controller SAC.
-    X_l, U_l = collect_rollouts(p, 250, 200)
-    
+    X_l, U_l = collect_rollouts(p, 1000, 100)
+    # with open('train_data.pkl','wb') as f:
+    #     pickle.dump([X_l, U_l], f)
+        
+    # with open('train_data.pkl','rb') as f:
+    #     X_l, U_l = pickle.load(f)
+        
     edmdc = DMDc(f_l)
-    edmdc.fit(X_l, U_l)
+    A, B, C = edmdc.fit(X_l, U_l)
     
     # test
-    X_test, U_test = collect_rollouts(p, 9, 200, max_excitation_ratio=1.) # let's show 9 prediction results
+    X_test, U_test = collect_rollouts(p, 9, 200) # let's show 9 prediction results
     plt.figure(figsize=[15,10])
     for i in range(9):
         plt.subplot(int("33{}".format(i+1)))
@@ -136,3 +149,18 @@ if __name__ == "__main__":
     plt.tight_layout()
     plt.show()
     
+    # X_test, U_test = collect_rollouts(p, 200, 200)
+    
+    # with open('test_data.pkl','wb') as f:
+    #     pickle.dump([X_test, U_test], f)
+        
+    # with open('test_data.pkl','rb') as f:
+    #     X_test, U_test = pickle.load(f)
+        
+    # vali_loss = 0.
+    # for i in range(200):
+    #     traj = edmdc.predict_traj(X_test[i][0].reshape(1,-1), U_test[i])
+    #     vali_loss += np.linalg.norm(X_test[i] - traj)
+    # print(vali_loss/200)
+    
+    # np.save("A.npy", A), np.save("B.npy", B), np.save("C.npy", C), np.save("bellcurve.npy", X_sub)
