@@ -12,13 +12,16 @@ Finished functions:
 #### Control  
 | Approach        | Reward Mean (50 runs) | Reward Variance|
 | ------------- |:-------------:|:-------------:|
-| iLQR<sup>superscript text </sup>      | -305.57 |   38239.82    |
-| SAC | -144.04 | 8377.89 |
-| FLQR | -144.04 | 8377.89 |
-| DMD-MPC | -144.04 | 8377.89 |
-| RK4-MPC | -144.04 | 8377.89 |
+| iLQR<sup>2 </sup>      | -305.57 |   38239.82    |
+| SAC<sup> 1 </sup> | -144.04 | 8377.89 |
+| FLQR<sup>3 </sup> | -144.04 | 8377.89 |
+| DMD-MPC<sup>4 </sup> | -164.93 | 10945.07 |
+| RK4-MPC<sup>5 </sup> | -142.25 | 9367.64 |
 | ...| | |
 
-Note:  
+Notes:  
 1. In SAC(soft actor-critic) the reinforcement learning package stablebaseline3 was used to compare with various control strategies. The training ran for 50k timesteps, to a convergence of the epi reward.  
-2. The cost matrices in iLQR are hard to tune by hand, and the torque constraints can't be taken into account. Therefore, its performance is just ok, but no problem to swing up and stabilize.
+2. The cost matrices in iLQR are hard to tune by hand, and the torque constraints can't be taken into account. Therefore, its performance is just ok, but no problem to swing up and stabilize.  
+3. Not working, the tracking objective function is hard to define.  
+4. MPC with the model learned through Dynamic mode decomposition. Very naive implementation, the symbolic feature expansion limits the speed of solution. There are better ways to include the nonlinear objective function into koopman feature.  
+5. MPC with Runge Kutta 4th order simulation on ground-truth ode. This approach can't let the gym rendering in real time.  
