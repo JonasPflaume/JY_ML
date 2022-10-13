@@ -12,8 +12,11 @@ Finished functions:
 #### Control  
 | Approach        | Reward Mean (50 runs) | Reward Variance|
 | ------------- |:-------------:|:-------------:|
-| iLQR      | -305.57 |   38239.82    |
+| iLQR<sup>superscript text </sup>      | -305.57 |   38239.82    |
 | SAC | -144.04 | 8377.89 |
+| FLQR | -144.04 | 8377.89 |
+| DMD-MPC | -144.04 | 8377.89 |
+| RK4-MPC | -144.04 | 8377.89 |
 | ...| | |
 
 Note:  
