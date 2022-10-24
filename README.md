@@ -6,7 +6,7 @@ Finished functions:
 #### Machine learning  
 | Approach      | MSE           |
 | ------------- |:-------------:|
-| Ridge + feature      | 2.207 |
+| Ridge + feature      | 2.111 |
 | MLP      | 1.469      |
 | ... |       |
 #### Control  

@@ -1,8 +1,10 @@
 import numpy as np
 
 class FourierBases:
-    def __init__(self, degree=1):
-        self.degree = degree
+    def __init__(self, *degree):
+        ''' degree is the phase factor of trigonometric funcs.
+        '''
+        self.degree = np.concatenate(degree)
         
     def __call__(self, X):
         ''' check if the first entry is 1
@@ -14,8 +16,8 @@ class FourierBases:
         else:
             X_aug = np.concatenate([np.ones([X.shape[0],1], dtype='f'), X], axis=1)
         
-        for k in range(1, self.degree+1):
-            X_aug = np.concatenate([X_aug, np.cos(k*X)], axis=1)
-            X_aug = np.concatenate([X_aug, np.sin(k*X)], axis=1)
+        for d in self.degree:
+            X_aug = np.concatenate([X_aug, np.cos(d*X)], axis=1)
+            X_aug = np.concatenate([X_aug, np.sin(d*X)], axis=1)
             
         return X_aug

@@ -10,8 +10,8 @@ class MLP(nn.Module):
     def __init__(self, hyperparam:dict):
         super().__init__()
         
-        layer_num = hyperparam["layer"]
-        layer_nodes = hyperparam["nodes"]
+        layer_num = hyperparam.get("layer")
+        layer_nodes = hyperparam.get("nodes")
         net = []
         for i in range(layer_num-1):
             net.append(nn.Linear(layer_nodes[i], layer_nodes[i+1]))
