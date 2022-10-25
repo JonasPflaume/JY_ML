@@ -120,7 +120,7 @@ if __name__ == "__main__":
     
     # 500 trajs, each has 200 steps.
     # This is designed to has the same env quiries with RL controller SAC.
-    X_l, U_l = collect_rollouts(p, 1000, 100)
+    X_l, U_l = collect_rollouts(p, 100, 100)
     # with open('train_data.pkl','wb') as f:
     #     pickle.dump([X_l, U_l], f)
         
