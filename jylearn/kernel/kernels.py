@@ -13,22 +13,21 @@ class KernelOperation(Enum):
 
 class Parameters(
                 namedtuple('ParametersInfo', 
-                ("tensor_dict", "dim_list", "operation_dict"))
+                ("tensor_dict", "operation_dict"))
                 ):
+    ''' The parameters class was design to perform the kernel operation including addition, multiplication, and exponentiation
     
+        Parameters will contain a
+    '''
     __slots__ = ()
     
-    def __new__(cls, name, dim, tensor, requres_grad=True):
+    def __new__(cls, name, tensor, requres_grad=True):
         ''' we use number to indicate the operation sequence
         '''
         if not isinstance(name, str):
             raise TypeError("Initialize the parameters with a string of name corresponding to the kernel.")
-        if not isinstance(dim, int):
-            raise TypeError("The dimension of parameters should be a integer.")
         if not isinstance(tensor, nn.parameter.Parameter):
             raise TypeError("We use pytorch to optimize hyperparameters.")
-        
-        assert len(tensor) == dim, "false dimension or tensor."
         
         tensor.requires_grad = requres_grad
         
@@ -37,7 +36,7 @@ class Parameters(
         
         operation_dict = OrderedDict()
         operation_dict['A'] = name
-        return super(Parameters, cls).__new__(cls, tensor_dict, [dim], operation_dict)
+        return super(Parameters, cls).__new__(cls, tensor_dict, operation_dict)
     
     def join(self, param2, operation:KernelOperation):
         ''' join two parameters instance
@@ -69,7 +68,7 @@ class Parameters(
         # concatenate operation dict
         self.operation_dict.update(temp_dict)
 
-        # update the parameters lists
+        # update the parameters dict
         self.tensor_dict.update(param2.tensor_dict)
         
         max_operation_self = max(self.operation_dict.keys())
