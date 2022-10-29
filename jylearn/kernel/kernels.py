@@ -1,5 +1,6 @@
 from abc import ABC
 from aifc import Error
+from ast import operator
 from collections import namedtuple, OrderedDict
 from copy import deepcopy
 from itertools import product
@@ -10,6 +11,7 @@ from enum import Enum
 from functools import partial
 
 device = "cuda" if th.cuda.is_available() else "cpu"
+
 
 def next_n_alpha(s, next_n):
     ''' helper function to get the next uppercase alphabet
@@ -23,10 +25,10 @@ class KernelOperation(Enum):
     ADD = "add"
     MUL = "mul"
 
-class Parameters(
-                namedtuple('ParametersInfo', 
-                ("tensor_dict", "operation_dict"))
-                ):
+ParametersBase = namedtuple('ParametersInfo', 
+                    ("tensor_dict", "operation_dict"))
+
+class Parameters(ParametersBase):
     
     ''' Core class to realize the operational logic of kernel combination.
         The parameters class was design to perform the kernel operation including addition, multiplication, and exponentiation.
@@ -106,7 +108,16 @@ class Parameters(
                 "operations are \t" + ",".join(self.operation_dict.values()) + "\n" +\
                 "".join(["%"]*100)
         return info
-
+    
+class CopiedParameter(Parameters):
+    ''' deep copy the parameters group of a Parameters instance
+    '''
+    def __new__(cls, parameters_cls):
+        operation_dict = deepcopy(parameters_cls.operation_dict)
+        tensor_dict = deepcopy(parameters_cls.tensor_dict)
+        return ParametersBase.__new__(cls, tensor_dict, operation_dict)
+            
+        
 class Kernel(nn.Module):
     ''' Kernel concepts:
         1. Expand the Parameters class to register the tensor parameters
@@ -212,7 +223,10 @@ class Sum(Kernel, CompoundKernel):
         if not isinstance(kernel1, Kernel) or not isinstance(kernel2, Kernel):
             raise TypeError("Operands should be kernels")
         
-        parameters_table1 = kernel1.get_parameters()
+        assert kernel1.input_dim == kernel2.input_dim, "please align the input dimenstion."
+        
+        self.input_dim = kernel1.input_dim
+        parameters_table1 = CopiedParameter(kernel1.get_parameters())
         parameters_table2 = kernel2.get_parameters()
         
         parameters_table1.join(parameters_table2, KernelOperation.ADD)
@@ -223,6 +237,7 @@ class Sum(Kernel, CompoundKernel):
         self.operation_dict = self.get_operation_dict()
         
     def forward(self, x, y):
+        assert x.shape[1] == self.input_dim, "wrong dimension."
         operation_res = self.evaluate_operation_dict(self.operation_dict, x, y)
         return next(reversed(operation_res.values()))
 
@@ -235,7 +250,10 @@ class Product(Kernel, CompoundKernel):
         if not isinstance(kernel1, Kernel) or not isinstance(kernel2, Kernel):
             raise TypeError("Operands should be kernels")
         
-        parameters_table1 = kernel1.get_parameters()
+        assert kernel1.input_dim == kernel2.input_dim, "please align the input dimenstion."
+        
+        self.input_dim = kernel1.input_dim
+        parameters_table1 = CopiedParameter(kernel1.get_parameters())
         parameters_table2 = kernel2.get_parameters()
         
         parameters_table1.join(parameters_table2, KernelOperation.MUL)
@@ -246,6 +264,7 @@ class Product(Kernel, CompoundKernel):
         self.operation_dict = self.get_operation_dict()
         
     def forward(self, x, y):
+        assert x.shape[1] == self.input_dim, "wrong dimension."
         operation_res = self.evaluate_operation_dict(self.operation_dict, x, y)
         return next(reversed(operation_res.values()))
     
@@ -260,7 +279,8 @@ class Exponentiation(Kernel, CompoundKernel):
         if not isinstance(exponent_factor, float):
             raise TypeError("exponent_factor should be a float")
         
-        parameters_table1 = kernel1.get_parameters()
+        self.input_dim = kernel1.input_dim
+        parameters_table1 = CopiedParameter(kernel1.get_parameters())
         exponent_factor_t = th.tensor([exponent_factor]).to(device)
         exponent_factor_param = nn.parameter.Parameter(exponent_factor_t)
         parameters_table2 = Parameters("exponent", exponent_factor_param, requres_grad=False) # constant dosen't need grad
@@ -273,6 +293,7 @@ class Exponentiation(Kernel, CompoundKernel):
         self.operation_dict = self.get_operation_dict()
         
     def forward(self, x, y):
+        assert x.shape[1] == self.input_dim, "wrong dimension."
         operation_res = self.evaluate_operation_dict(self.operation_dict, x, y)
         return next(reversed(operation_res.values()))
 
@@ -282,7 +303,7 @@ class RBF(Kernel):
     '''
     counter = 0
     
-    def __init__(self, sigma:float, l:np.ndarray):
+    def __init__(self, sigma:float, l:np.ndarray, dim:int):
         super().__init__()
         param = np.concatenate([np.array([sigma]), l])
         param_t = th.from_numpy(param).to(device)
@@ -291,9 +312,12 @@ class RBF(Kernel):
         curr_parameters = Parameters(self.rbf_name, rbf_param)
 
         self.set_parameters(curr_parameters)
+        assert dim == len(l), "wrong dimension."
+        self.input_dim = dim
         RBF.counter += 1
     
     def forward(self, x, y):
+        assert x.shape[1] == self.input_dim, "wrong dimension."
         theta = eval("self.{}".format(self.rbf_name))
         distance = th.cdist(x/theta[1:], y/theta[1:])
         return theta[0] * th.exp( - distance ** 2 )
@@ -315,7 +339,7 @@ class Constant(Kernel):
     '''
     counter = 0
     
-    def __init__(self, c:float):
+    def __init__(self, c:float, dim):
         super().__init__()
         c = np.array([c]).reshape(-1,)
         t = th.from_numpy(c).to(device)
@@ -323,10 +347,12 @@ class Constant(Kernel):
         cons_c = nn.parameter.Parameter(t)
         curr_parameters = Parameters(self.cons_name, cons_c)
 
+        self.input_dim = dim
         self.set_parameters(curr_parameters)
         Constant.counter += 1
     
     def forward(self, x, y):
+        assert x.shape[1] == self.input_dim, "wrong dimension."
         return eval("self.{}".format(self.cons_name))
 
 class DotProduct(Kernel):
@@ -334,18 +360,19 @@ class DotProduct(Kernel):
     '''
     counter = 0
     
-    def __init__(self, c:float):
+    def __init__(self, c:float, dim:int):
         super().__init__()
         c = np.array([c]).reshape(-1,)
         t = th.from_numpy(c).to(device)
         self.dot_name = "dot{}".format(DotProduct.counter)
         dot_c = nn.parameter.Parameter(t)
         curr_parameters = Parameters(self.dot_name, dot_c)
-
+        self.input_dim = dim
         self.set_parameters(curr_parameters)
         Constant.counter += 1
     
     def forward(self, x, y):
+        assert x.shape[1] == self.input_dim, "wrong dimension."
         return eval("self.{}".format(self.dot_name)) * th.einsum("ij,kj->ik", x, y)
     
     
