@@ -1,12 +1,11 @@
 import torch as th
 import torch.nn as nn
-from kernels import Parameters, RBF, Constant, DotProduct
-from kernels import KernelOperation
+from kernels import RBF, Constant, DotProduct
 import numpy as np
 device = "cuda" if th.cuda.is_available() else "cpu"
 
 #
-test_case = 2
+test_case = 4
 
 import matplotlib.pyplot as plt
 l = np.ones(1,) * 0.7
@@ -15,11 +14,11 @@ cons = Constant(0.9)
 dot = DotProduct(0.1)
 
 if test_case == 1:
-    # cons = Constant(1.1)
+    kernel = (rbf + cons + dot) ** 2.
     x = np.linspace(-7, 7, 1000)
 
     x = th.from_numpy(x).to(device)
-    pred = rbf(x.reshape(-1,1), x.reshape(-1,1))
+    pred = kernel(x.reshape(-1,1), x.reshape(-1,1))
     pred += th.eye(1000).to(device) * 1e-8
     mean = th.zeros(1000,).to(device)
     dis = th.distributions.multivariate_normal.MultivariateNormal(mean.double(), pred.double())
@@ -29,6 +28,7 @@ if test_case == 1:
         plt.plot(x.detach().cpu().numpy(), sample.detach().cpu().numpy())
     plt.grid()
     plt.show()
+    
 elif test_case == 2:
     kernel1 = cons + rbf ** 2. + dot
     kernel2 = rbf
@@ -43,6 +43,7 @@ elif test_case == 2:
     
 elif test_case == 3:
     # kernel regression
+    kernel = rbf + cons + dot
     X = th.linspace(-5,5,100).reshape(-1,1).to(device).double()
     Y = th.cos(X)
     Xtrain = th.linspace(-5,5,10).reshape(-1,1).to(device).double()
@@ -50,7 +51,7 @@ elif test_case == 3:
     import time
     s = time.time()
     for i in range(1000):
-        temp = rbf(X, Xtrain)
+        temp = kernel(X, Xtrain)
         pred = temp @ Ytrain / th.sum(temp, dim=1, keepdim=True)
     e = time.time()
     print("The time for each pred: %.5f" % ((e-s)/1000))
@@ -60,3 +61,14 @@ elif test_case == 3:
     plt.grid()
     plt.legend()
     plt.show()
+    
+elif test_case == 4:
+    l = np.ones(2,) * 0.7
+    rbf = RBF(1., l)
+    kernel = rbf ** 2.
+    X = th.tensor([1., 1.]).reshape(1,2).to(device)
+    Y = th.tensor([2., 2.]).reshape(1,2).to(device)
+    res = kernel(X, Y)
+    res.backward()
+    for parameter in rbf.parameters():
+        print(parameter.grad)

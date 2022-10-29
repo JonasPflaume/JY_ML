@@ -1,6 +1,7 @@
 from abc import ABC
 from aifc import Error
 from collections import namedtuple, OrderedDict
+from copy import deepcopy
 from itertools import product
 import torch as th
 import torch.nn as nn
@@ -11,9 +12,13 @@ from functools import partial
 device = "cuda" if th.cuda.is_available() else "cpu"
 
 def next_n_alpha(s, next_n):
+    ''' helper function to get the next uppercase alphabet
+    '''
     return chr((ord(s.upper()) + next_n - 65) % 26 + 65)
 
 class KernelOperation(Enum):
+    ''' enum class to indicate the kernel operations
+    '''
     EXP = "exp"
     ADD = "add"
     MUL = "mul"
@@ -22,19 +27,21 @@ class Parameters(
                 namedtuple('ParametersInfo', 
                 ("tensor_dict", "operation_dict"))
                 ):
-    ''' The parameters class was design to perform the kernel operation including addition, multiplication, and exponentiation
+    
+    ''' Core class to realize the operational logic of kernel combination.
+        The parameters class was design to perform the kernel operation including addition, multiplication, and exponentiation.
     
         tensor_dict:        Parameters contains a dict of tensor parameters with its name.
         
-        operation_dict:     The operation registration is design as a flat expansion of all steps. For details check test.py
-                            keys are regarded as variables and values are the corresponding operations.
+        operation_dict:     The operation registration is design as a flat expansion of all operation results.
+                            keys are regarded as Variables and values are the corresponding Operational Logic.
         
-        The reconstruction of operations needs to evaluate the variables represented by keys by an alphabetic sequence.
+        The reconstruction of operations needs to evaluate the variables represented by keys in an alphabetic sequence.
     '''
     __slots__ = ()
     
     def __new__(cls, name, tensor, requres_grad=True):
-        ''' we use number to indicate the operation sequence
+        ''' we use uppercase alphabet to indicate the operation sequence
         '''
         if not isinstance(name, str):
             raise TypeError("Initialize the parameters with a string of name corresponding to the kernel.")
@@ -47,12 +54,12 @@ class Parameters(
         tensor_dict[name] = tensor
         
         operation_dict = OrderedDict()
-        operation_dict['A'] = name
+        operation_dict['A'] = name # start from the root node
         return super(Parameters, cls).__new__(cls, tensor_dict, operation_dict)
     
     def join(self, param2, operation:KernelOperation):
-        ''' join two parameters instance
-            parameters will be concatenated as a set.
+        ''' join two parameters instance by an operation logic
+            parameters will be concatenated as a unique set.
             The operator will be recoreded as a dict by steps.
         '''
         if not isinstance(operation, KernelOperation):
@@ -148,9 +155,13 @@ class Kernel(nn.Module):
         return str(self._parameters)
 
 class CompoundKernel(ABC):
-    '''
+    ''' The base class for a compound kernel
+        which contains the necessary methods to 
+        reconstruct the compound kernel from individual kernels.
     '''
     def generate_func_dict(self):
+        ''' generate the necessary kernel functionals
+        '''
         if "curr_parameters" not in self.__dict__.keys():
             raise KeyError("Parameters should have been set.")
         tensor_dict = self.curr_parameters.tensor_dict
@@ -163,32 +174,37 @@ class CompoundKernel(ABC):
         return func_chain_dict
             
     def get_operation_dict(self):
+        ''' get the operation logic dict
+        '''
         if "curr_parameters" not in self.__dict__.keys():
             raise KeyError("Parameters should have been set.")
         operation_dict = self.curr_parameters.operation_dict
         return operation_dict
     
     def evaluate_operation_dict(self, operation_dict, x, y):
-        for key, operation in operation_dict.items():
+        ''' calculate the numerical evaluation for each step
+        '''
+        operation_dict_copy = deepcopy(operation_dict)
+        for key, operation in operation_dict_copy.items():
             operation = operation.split(" ")
             if len(operation) == 1: # which means basic operation
-                operation_dict[key] = self.func_dict[operation[0]](x, y)
+                operation_dict_copy[key] = self.func_dict[operation[0]](x, y)
                 
             else:
-                left = operation_dict[operation[0]]
-                right = operation_dict[operation[2]]
+                left = operation_dict_copy[operation[0]]
+                right = operation_dict_copy[operation[2]]
                 if operation[1] == KernelOperation.ADD.value:
-                    operation_dict[key] = left + right
+                    operation_dict_copy[key] = left + right
                 elif operation[1] == KernelOperation.MUL.value:
-                    operation_dict[key] = left * right
+                    operation_dict_copy[key] = left * right
                 elif operation[1] == KernelOperation.EXP.value:
-                    operation_dict[key] = left ** right
+                    operation_dict_copy[key] = left ** right
                 
-        return operation_dict
+        return operation_dict_copy
             
     
 class Sum(Kernel, CompoundKernel):
-    '''
+    ''' Summation operator class
     '''
     def __init__(self, kernel1, kernel2):
         super().__init__()
@@ -211,7 +227,7 @@ class Sum(Kernel, CompoundKernel):
         return next(reversed(operation_res.values()))
 
 class Product(Kernel, CompoundKernel):
-    '''
+    ''' Product operator class
     '''
     def __init__(self, kernel1, kernel2):
         super().__init__()
@@ -234,7 +250,7 @@ class Product(Kernel, CompoundKernel):
         return next(reversed(operation_res.values()))
     
 class Exponentiation(Kernel, CompoundKernel):
-    '''
+    ''' Exponentiation operator class
     '''
     def __init__(self, kernel1, exponent_factor:float):
         super().__init__()
@@ -295,7 +311,7 @@ class Period(Kernel):
     '''
 
 class Constant(Kernel):
-    '''
+    ''' constant kernel
     '''
     counter = 0
     
@@ -314,7 +330,7 @@ class Constant(Kernel):
         return eval("self.{}".format(self.cons_name))
 
 class DotProduct(Kernel):
-    '''
+    ''' dot product kernel: sigma * x.T @ x
     '''
     counter = 0
     
