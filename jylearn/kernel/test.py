@@ -39,6 +39,13 @@ assert th.isclose((rbf1(X, Y) ** 2. + rbf2(X, Y) ** 2.) * cons_factor, (((rbf1 *
 # show the operation logic table
 print((((rbf1 ** 2.) + (rbf2 ** 2.)) * cons).get_parameters())
 
+### test autograd of compound kernels
+kernel = (((rbf1 ** 2.) + (rbf2 ** 2.)) * cons)
+res = kernel(X, Y)
+res.backward()
+for name, param in kernel.named_parameters():
+    print("The gradient of "+name, param.grad)
+
 # test the generalized dot product kernel
 X = th.tensor([1., 1.]).reshape(1,2).to(device).double()
 Y = th.tensor([2., 2.]).reshape(1,2).to(device).double()

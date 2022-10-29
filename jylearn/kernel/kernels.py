@@ -126,6 +126,17 @@ class Kernel(nn.Module):
         2. forward function utilize the Parameters.operation_dict to perform kernel evaluation.
         3. operator methods were designed to update the parameters dict
     '''
+    def stop_autograd(self):
+        for name, param in self.named_parameters():
+            if name == "exponent":
+                continue
+            param.requires_grad = False
+    
+    def start_autograd(self):
+        for name, param in self.named_parameters():
+            if name == "exponent":
+                continue
+            param.requires_grad = True
         
     def set_parameters(self, parameters_cls):
         self.curr_parameters = parameters_cls
