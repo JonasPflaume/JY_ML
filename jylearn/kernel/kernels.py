@@ -4,6 +4,7 @@ from ast import operator
 from collections import namedtuple, OrderedDict
 from copy import deepcopy
 from itertools import product
+from turtle import forward
 import torch as th
 import torch.nn as nn
 import numpy as np
@@ -324,8 +325,40 @@ class RBF(Kernel):
         return theta[0] * th.exp( - distance ** 2 )
 
 class Matern(Kernel):
+    ''' Matern kernel
     '''
-    '''
+    counter = 0
+    
+    def __init__(self, sigma:float, mu:float, l:np.ndarray, dim:int):
+        super().__init__()
+        param = np.concatenate([np.array([sigma, mu]), l])
+        param_t = th.from_numpy(param).to(device)
+        self.matern_name = "matern{}".format(Matern.counter)
+        matern_param = nn.parameter.Parameter(param_t)
+        curr_parameters = Parameters(self.matern_name, matern_param)
+
+        self.set_parameters(curr_parameters)
+        assert dim == len(l), "wrong dimension."
+        self.input_dim = dim
+        Matern.counter += 1
+    
+    # general case; expensive to evaluate
+    def forward(self, x, y):
+        theta = eval("self.{}".format(self.matern_name))
+        dists = th.cdist(x / theta[2:], y / theta[2:])
+        if theta[1] == 0.5:
+            K = theta[0] * th.exp(-dists)
+        elif theta[1] == 1.5:
+            K = dists * th.sqrt(th.tensor([3.]).to(device))
+            K = theta[0] * (1.0 + K) * th.exp(-K)
+        elif theta[1] == 2.5:
+            K = dists * th.sqrt(th.tensor([5.]).to(device))
+            K = theta[0] * (1.0 + K + K**2 / 3.0) * th.exp(-K)
+        elif th.isinf(theta[1]):
+            K = theta[0] * th.exp(-(dists**2) / 2.0)
+        else:  
+            raise NotImplementedError("General cases are expensive to evaluate, please use mu = 0.5,1.5,2.5 and Inf")
+        return K
 
 class RQK(Kernel):
     ''' rational quadratic kernel
@@ -350,12 +383,7 @@ class RQK(Kernel):
         theta = eval("self.{}".format(self.rqk_name))
         distance = th.cdist(x/theta[2:], y/theta[2:])
         return theta[0] * ( 1 + distance ** 2 / theta[1] ) ** (-theta[1])
-
-class Period(Kernel):
-    '''
-    '''
     
-
 class Constant(Kernel):
     ''' constant kernel
     '''
@@ -378,24 +406,26 @@ class Constant(Kernel):
         return eval("self.{}".format(self.cons_name))
 
 class DotProduct(Kernel):
-    ''' dot product kernel: sigma * x.T @ x
+    ''' dot product kernel: x.T @ L @ x
+        l - vector parameter is regarded as diagonal weighting matrix L
     '''
     counter = 0
     
-    def __init__(self, c:float, dim:int):
+    def __init__(self, l:np.array, dim:int):
         super().__init__()
-        c = np.array([c]).reshape(-1,)
-        t = th.from_numpy(c).to(device)
+
+        t = th.from_numpy(l).to(device)
         self.dot_name = "dot{}".format(DotProduct.counter)
-        dot_c = nn.parameter.Parameter(t)
-        curr_parameters = Parameters(self.dot_name, dot_c)
+        dot_l = nn.parameter.Parameter(t)
+        curr_parameters = Parameters(self.dot_name, dot_l)
         self.input_dim = dim
         self.set_parameters(curr_parameters)
         Constant.counter += 1
     
     def forward(self, x, y):
         assert x.shape[1] == self.input_dim, "wrong dimension."
-        return eval("self.{}".format(self.dot_name)) * th.einsum("ij,kj->ik", x, y)
+        l = eval("self.{}".format(self.dot_name))
+        return th.einsum("ij,j,kj->ik", x, l, y)
     
     
 # Those functionals were designed to used in computational graph calling.
@@ -409,7 +439,7 @@ def cons(param, x, y):
     return param * 1.
 
 def dot(param, x, y):
-    return param * th.einsum("ij,kj->ik", x, y)
+    return th.einsum("ij,j,kj->ik", x, param, y)
 
 def exponent(param, x, y):
     return param * 1.
@@ -417,3 +447,20 @@ def exponent(param, x, y):
 def rqk(param, x, y):
     distance = th.cdist(x/param[2:], y/param[2:])
     return param[0] * ( 1 + distance ** 2 / param[1] ) ** (-param[1])
+
+def matern(param, x, y):
+    theta = param
+    dists = th.cdist(x / theta[2:], y / theta[2:])
+    if theta[1] == 0.5:
+        K = theta[0] * th.exp(-dists)
+    elif theta[1] == 1.5:
+        K = dists * th.sqrt(th.tensor([3.]).to(device))
+        K = theta[0] * (1.0 + K) * th.exp(-K)
+    elif theta[1] == 2.5:
+        K = dists * th.sqrt(th.tensor([5.]).to(device))
+        K = theta[0] * (1.0 + K + K**2 / 3.0) * th.exp(-K)
+    elif th.isinf(theta[1]):
+        K = theta[0] * th.exp(-(dists**2) / 2.0)
+    else:  
+        raise NotImplementedError("General cases are expensive to evaluate, please use mu = 0.5,1.5,2.5 and Inf")
+    return K

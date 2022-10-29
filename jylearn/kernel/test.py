@@ -1,7 +1,7 @@
 from pickletools import read_bytes1
 import torch as th
 import torch.nn as nn
-from kernels import RBF, Constant
+from kernels import RBF, Constant, DotProduct
 import numpy as np
 th.manual_seed(0)
 device = "cuda" if th.cuda.is_available() else "cpu"
@@ -20,8 +20,8 @@ res.backward()
 print("Grad of kernel parameters: ", list(kernel.parameters())[0].grad)
 
 ### test compound kernels
-X = th.tensor([1.]).reshape(1,1).to(device)
-Y = th.tensor([2.]).reshape(1,1).to(device)
+X = th.tensor([1.]).reshape(1,1).to(device).double()
+Y = th.tensor([2.]).reshape(1,1).to(device).double()
 
 l1 = np.ones(1,) * 0.7
 rbf1 = RBF(1. ,l1, 1)
@@ -38,5 +38,11 @@ assert th.isclose(rbf1(X, Y) ** 2. + rbf2(X, Y) ** 2., ((rbf1 ** 2.) + (rbf2 ** 
 assert th.isclose((rbf1(X, Y) ** 2. + rbf2(X, Y) ** 2.) * cons_factor, (((rbf1 ** 2.) + (rbf2 ** 2.)) * cons)(X, Y))
 # show the operation logic table
 print((((rbf1 ** 2.) + (rbf2 ** 2.)) * cons).get_parameters())
+
+# test the generalized dot product kernel
+X = th.tensor([1., 1.]).reshape(1,2).to(device).double()
+Y = th.tensor([2., 2.]).reshape(1,2).to(device).double()
+dot = DotProduct(dim=2, l=np.array([0.5, 0.1]))
+assert th.isclose(dot(X, Y), th.tensor([[1.2]]).to(device).double())
 
 # seems all good ...
