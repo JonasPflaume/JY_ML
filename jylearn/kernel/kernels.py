@@ -14,7 +14,7 @@ device = "cuda" if th.cuda.is_available() else "cpu"
 
 
 def next_n_alpha(s, next_n):
-    ''' helper function to get the next uppercase alphabet
+    ''' helper function to get the next n-th uppercase alphabet
     '''
     return chr((ord(s.upper()) + next_n - 65) % 26 + 65)
 
@@ -25,6 +25,7 @@ class KernelOperation(Enum):
     ADD = "add"
     MUL = "mul"
 
+# The base class for computational graph class - Parameters 
 ParametersBase = namedtuple('ParametersInfo', 
                     ("tensor_dict", "operation_dict"))
 
@@ -327,12 +328,33 @@ class Matern(Kernel):
     '''
 
 class RQK(Kernel):
+    ''' rational quadratic kernel
     '''
-    '''
+    counter = 0
+    
+    def __init__(self, sigma:float, alpha:float, l:np.ndarray, dim:int):
+        super().__init__()
+        param = np.concatenate([np.array([sigma]), np.array([alpha]), l])
+        param_t = th.from_numpy(param).to(device)
+        self.rqk_name = "rqk{}".format(RBF.counter)
+        rqk_param = nn.parameter.Parameter(param_t)
+        curr_parameters = Parameters(self.rqk_name, rqk_param)
+
+        self.set_parameters(curr_parameters)
+        assert dim == len(l), "wrong dimension."
+        self.input_dim = dim
+        RQK.counter += 1
+    
+    def forward(self, x, y):
+        assert x.shape[1] == self.input_dim, "wrong dimension."
+        theta = eval("self.{}".format(self.rqk_name))
+        distance = th.cdist(x/theta[2:], y/theta[2:])
+        return theta[0] * ( 1 + distance ** 2 / theta[1] ) ** (-theta[1])
 
 class Period(Kernel):
     '''
     '''
+    
 
 class Constant(Kernel):
     ''' constant kernel
@@ -376,7 +398,9 @@ class DotProduct(Kernel):
         return eval("self.{}".format(self.dot_name)) * th.einsum("ij,kj->ik", x, y)
     
     
-# those functionals were designed to use partial to bind parameters in computational graphs !
+# Those functionals were designed to used in computational graph calling.
+# This means that each kernel class will correspond to one of the functionals implemented below.
+
 def rbf(param, x, y):
     distance = param[0] * th.cdist(x/param[1:], y/param[1:])
     return th.exp( - distance ** 2 )
@@ -389,3 +413,7 @@ def dot(param, x, y):
 
 def exponent(param, x, y):
     return param * 1.
+
+def rqk(param, x, y):
+    distance = th.cdist(x/param[2:], y/param[2:])
+    return param[0] * ( 1 + distance ** 2 / param[1] ) ** (-param[1])

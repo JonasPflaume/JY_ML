@@ -1,7 +1,7 @@
 from pickletools import read_bytes1
 import torch as th
 import torch.nn as nn
-from kernels import RBF, Constant, DotProduct
+from kernels import RBF, Constant
 import numpy as np
 th.manual_seed(0)
 device = "cuda" if th.cuda.is_available() else "cpu"
