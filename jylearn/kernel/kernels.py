@@ -353,7 +353,6 @@ class Matern(Kernel):
         self.input_dim = dim
         Matern.counter += 1
     
-    # general case; expensive to evaluate
     def forward(self, x, y):
         theta = eval("self.{}".format(self.matern_name))
         dists = th.cdist(x / theta[2:], y / theta[2:])
@@ -368,7 +367,7 @@ class Matern(Kernel):
         elif th.isinf(theta[1]):
             K = theta[0] * th.exp(-(dists**2) / 2.0)
         else:  
-            raise NotImplementedError("General cases are expensive to evaluate, please use mu = 0.5,1.5,2.5 and Inf")
+            raise NotImplementedError("General cases are expensive to evaluate, please use mu = 0.5, 1.5, 2.5 and Inf")
         return K
 
 class RQK(Kernel):
@@ -473,5 +472,5 @@ def matern(param, x, y):
     elif th.isinf(theta[1]):
         K = theta[0] * th.exp(-(dists**2) / 2.0)
     else:  
-        raise NotImplementedError("General cases are expensive to evaluate, please use mu = 0.5,1.5,2.5 and Inf")
+        raise NotImplementedError("General cases are expensive to evaluate, please use mu = 0.5, 1.5, 2.5 and Inf")
     return K
