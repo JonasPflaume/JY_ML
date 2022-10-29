@@ -105,7 +105,7 @@ class Parameters(ParametersBase):
         info =  "".join(["%"]*100) + "\n"\
                 "This is a parameters group composed by: " +\
                 ",".join(self.tensor_dict.keys()) + "\n" + \
-                "by operation numbering: \t" + ",".join(self.operation_dict.keys()) + "\n" + \
+                "operation numbering: \t" + ",".join(self.operation_dict.keys()) + "\n" + \
                 "operations are \t" + ",".join(self.operation_dict.values()) + "\n" +\
                 "".join(["%"]*100)
         return info

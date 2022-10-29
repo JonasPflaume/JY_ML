@@ -11,13 +11,15 @@ device = "cuda" if th.cuda.is_available() else "cpu"
 l = np.ones(1,) * 0.7
 rbf = RBF(1., l, 1)
 
-X = th.tensor([1.]).reshape(1,1).to(device)
-Y = th.tensor([2.]).reshape(1,1).to(device)
+X = th.randn(10000,1).to(device)
+Y = th.randn(10000,1).to(device)
 kernel = rbf ** 2.
 res = kernel(X, Y)
+res = th.sum(res)
 res.backward()
+print("Grad of kernel parameters: ", list(kernel.parameters())[0].grad)
 
-#### test compound kernels
+### test compound kernels
 X = th.tensor([1.]).reshape(1,1).to(device)
 Y = th.tensor([2.]).reshape(1,1).to(device)
 
