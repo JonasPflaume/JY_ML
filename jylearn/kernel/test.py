@@ -1,23 +1,62 @@
 import torch as th
 import torch.nn as nn
-from kernels import Parameters
+from kernels import Parameters, RBF, Constant, DotProduct
 from kernels import KernelOperation
+import numpy as np
+device = "cuda" if th.cuda.is_available() else "cpu"
 
-### Test the parameter group
-t = th.zeros(3,)
-P1 = Parameters("1a", nn.parameter.Parameter(t))
+#
+test_case = 2
 
-P2 = Parameters("2a", nn.parameter.Parameter(t))
+import matplotlib.pyplot as plt
+l = np.ones(1,) * 0.7
+rbf = RBF(1., l)
+cons = Constant(0.9)
+dot = DotProduct(0.1)
 
-P1.join(P2, KernelOperation.ADD)
+if test_case == 1:
+    # cons = Constant(1.1)
+    x = np.linspace(-7, 7, 1000)
 
-t = th.zeros(3,)
-P2 = Parameters("3a", nn.parameter.Parameter(t))
-P2.join(P1, KernelOperation.ADD)
-
-t = th.zeros(1,)
-P3 = Parameters("4a", nn.parameter.Parameter(t), requres_grad=False)
-P2.join(P3, KernelOperation.EXP)
-print(P2)
-
-### Seems OK
+    x = th.from_numpy(x).to(device)
+    pred = rbf(x.reshape(-1,1), x.reshape(-1,1))
+    pred += th.eye(1000).to(device) * 1e-8
+    mean = th.zeros(1000,).to(device)
+    dis = th.distributions.multivariate_normal.MultivariateNormal(mean.double(), pred.double())
+    samples = [dis.sample() for _ in range(5)]
+    
+    for sample in samples:
+        plt.plot(x.detach().cpu().numpy(), sample.detach().cpu().numpy())
+    plt.grid()
+    plt.show()
+elif test_case == 2:
+    kernel1 = cons + rbf ** 2. + dot
+    kernel2 = rbf
+    kernel3 = dot
+    X = th.tensor([1.]).reshape(1,1).to(device)
+    Y = th.tensor([2.]).reshape(1,1).to(device)
+    res1 = kernel1(X, Y)
+    res2 = kernel2(X, Y)
+    res3 = kernel3(X, Y)
+    
+    assert th.isclose(res1, res3 + res2 ** 2. + 0.9)
+    
+elif test_case == 3:
+    # kernel regression
+    X = th.linspace(-5,5,100).reshape(-1,1).to(device).double()
+    Y = th.cos(X)
+    Xtrain = th.linspace(-5,5,10).reshape(-1,1).to(device).double()
+    Ytrain = th.cos(Xtrain) + th.randn(10,1).to(device).double() * 0.2
+    import time
+    s = time.time()
+    for i in range(1000):
+        temp = rbf(X, Xtrain)
+        pred = temp @ Ytrain / th.sum(temp, dim=1, keepdim=True)
+    e = time.time()
+    print("The time for each pred: %.5f" % ((e-s)/1000))
+    plt.plot(X.detach().cpu().numpy(), pred.detach().cpu().numpy(), label="Prediction")
+    plt.plot(X.detach().cpu().numpy(), Y.detach().cpu().numpy(), label="GroundTueth")
+    plt.plot(Xtrain.detach().cpu().numpy(), Ytrain.detach().cpu().numpy(), 'rx', label="data", alpha=0.2)
+    plt.grid()
+    plt.legend()
+    plt.show()

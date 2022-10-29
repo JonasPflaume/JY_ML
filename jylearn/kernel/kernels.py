@@ -1,7 +1,14 @@
+from abc import ABC
+from aifc import Error
 from collections import namedtuple, OrderedDict
+from itertools import product
 import torch as th
 import torch.nn as nn
+import numpy as np
 from enum import Enum
+from functools import partial
+
+device = "cuda" if th.cuda.is_available() else "cpu"
 
 def next_n_alpha(s, next_n):
     return chr((ord(s.upper()) + next_n - 65) % 26 + 65)
@@ -17,7 +24,12 @@ class Parameters(
                 ):
     ''' The parameters class was design to perform the kernel operation including addition, multiplication, and exponentiation
     
-        Parameters will contain a
+        tensor_dict:        Parameters contains a dict of tensor parameters with its name.
+        
+        operation_dict:     The operation registration is design as a flat expansion of all steps. For details check test.py
+                            keys are regarded as variables and values are the corresponding operations.
+        
+        The reconstruction of operations needs to evaluate the variables represented by keys by an alphabetic sequence.
     '''
     __slots__ = ()
     
@@ -89,50 +101,186 @@ class Parameters(
         return info
 
 class Kernel(nn.Module):
-    
-    def register_parameters(self, parameters_cls):
-        pass
-    
-    def forward(self, x):
-        pass
+    ''' Kernel concepts:
+        1. Expand the Parameters class to register the tensor parameters
+        2. forward function utilize the Parameters.operation_dict to perform kernel evaluation.
+        3. operator methods were designed to update the parameters dict
+    '''
+        
+    def set_parameters(self, parameters_cls):
+        self.curr_parameters = parameters_cls
+        for name, parameter in parameters_cls.tensor_dict.items():
+            self.register_parameter(name, parameter)
+            
+    def get_parameters(self):
+        if "curr_parameters" not in self.__dict__.keys():
+            raise KeyError("Parameters can only be accessed after they have been set.")
+        
+        return self.curr_parameters
     
     def __add__(self, right):
-        pass
+        if not isinstance(right, Kernel):
+            raise Error("The instance should be a kernel")
+        return Sum(self, right)
     
     def __radd__(self, left):
-        pass
+        if not isinstance(left, Kernel):
+            raise Error("The instance should be a kernel")
+        return Sum(left, self)
     
     def __mul__(self, right):
-        pass
+        if not isinstance(right, Kernel):
+            raise Error("The instance should be a kernel")
+        return Product(self, right)
     
     def __rmul__(self, left):
-        pass
+        if not isinstance(left, Kernel):
+            raise Error("The instance should be a kernel")
+        return Product(left, self)
     
     def __pow__(self, exponent_factor):
-        pass
+        if not isinstance(exponent_factor, float):
+            raise Error("The instance should be a float")
+        # the exponent_factor will be capsulated in a Parameters instance
+        return Exponentiation(self, exponent_factor)
     
     def __repr__(self):
-        pass
+        return str(self._parameters)
+
+class CompoundKernel(ABC):
+    '''
+    '''
+    def generate_func_dict(self):
+        if "curr_parameters" not in self.__dict__.keys():
+            raise KeyError("Parameters should have been set.")
+        tensor_dict = self.curr_parameters.tensor_dict
+        func_chain_dict = OrderedDict()
+        for name, param in tensor_dict.items():
+            command = "".join([i for i in name if not i.isdigit()])
+            command = "partial({}, param)".format(command)
+            func = eval(command)
+            func_chain_dict[name] = func
+        return func_chain_dict
+            
+    def get_operation_dict(self):
+        if "curr_parameters" not in self.__dict__.keys():
+            raise KeyError("Parameters should have been set.")
+        operation_dict = self.curr_parameters.operation_dict
+        return operation_dict
     
-class Sum(Kernel):
+    def evaluate_operation_dict(self, operation_dict, x, y):
+        for key, operation in operation_dict.items():
+            operation = operation.split(" ")
+            if len(operation) == 1: # which means basic operation
+                operation_dict[key] = self.func_dict[operation[0]](x, y)
+                
+            else:
+                left = operation_dict[operation[0]]
+                right = operation_dict[operation[2]]
+                if operation[1] == KernelOperation.ADD.value:
+                    operation_dict[key] = left + right
+                elif operation[1] == KernelOperation.MUL.value:
+                    operation_dict[key] = left * right
+                elif operation[1] == KernelOperation.EXP.value:
+                    operation_dict[key] = left ** right
+                
+        return operation_dict
+            
+    
+class Sum(Kernel, CompoundKernel):
     '''
     '''
+    def __init__(self, kernel1, kernel2):
+        super().__init__()
+        # update the parameters table and form the func table
+        if not isinstance(kernel1, Kernel) or not isinstance(kernel2, Kernel):
+            raise TypeError("Operands should be kernels")
+        
+        parameters_table1 = kernel1.get_parameters()
+        parameters_table2 = kernel2.get_parameters()
+        
+        parameters_table1.join(parameters_table2, KernelOperation.ADD)
+        
+        self.set_parameters(parameters_cls=parameters_table1)
+        
+        self.func_dict = self.generate_func_dict()
+        self.operation_dict = self.get_operation_dict()
+        
+    def forward(self, x, y):
+        operation_res = self.evaluate_operation_dict(self.operation_dict, x, y)
+        return next(reversed(operation_res.values()))
 
-class Product(Kernel):
+class Product(Kernel, CompoundKernel):
     '''
     '''
+    def __init__(self, kernel1, kernel2):
+        super().__init__()
+        # update the parameters table and form the func table
+        if not isinstance(kernel1, Kernel) or not isinstance(kernel2, Kernel):
+            raise TypeError("Operands should be kernels")
+        
+        parameters_table1 = kernel1.get_parameters()
+        parameters_table2 = kernel2.get_parameters()
+        
+        parameters_table1.join(parameters_table2, KernelOperation.MUL)
+        
+        self.set_parameters(parameters_cls=parameters_table1)
+        
+        self.func_dict = self.generate_func_dict()
+        self.operation_dict = self.get_operation_dict()
+        
+    def forward(self, x, y):
+        operation_res = self.evaluate_operation_dict(self.operation_dict, x, y)
+        return next(reversed(operation_res.values()))
+    
+class Exponentiation(Kernel, CompoundKernel):
+    '''
+    '''
+    def __init__(self, kernel1, exponent_factor:float):
+        super().__init__()
+        # update the parameters table and form the func table
+        if not isinstance(kernel1, Kernel):
+            raise TypeError("Operand1 should be kernels")
+        if not isinstance(exponent_factor, float):
+            raise TypeError("exponent_factor should be a float")
+        
+        parameters_table1 = kernel1.get_parameters()
+        exponent_factor_t = th.tensor([exponent_factor]).to(device)
+        exponent_factor_param = nn.parameter.Parameter(exponent_factor_t)
+        parameters_table2 = Parameters("exponent", exponent_factor_param, requres_grad=False) # constant dosen't need grad
+        
+        parameters_table1.join(parameters_table2, KernelOperation.EXP)
+        
+        self.set_parameters(parameters_cls=parameters_table1)
+        
+        self.func_dict = self.generate_func_dict()
+        self.operation_dict = self.get_operation_dict()
+        
+    def forward(self, x, y):
+        operation_res = self.evaluate_operation_dict(self.operation_dict, x, y)
+        return next(reversed(operation_res.values()))
 
-class Exponentiation(Kernel):
-    '''
-    '''
-
-#####################
-##      Kernels    ##
-#####################
 
 class RBF(Kernel):
+    ''' RBF kernel
     '''
-    '''
+    counter = 0
+    
+    def __init__(self, sigma:float, l:np.ndarray):
+        super().__init__()
+        param = np.concatenate([np.array([sigma]), l])
+        param_t = th.from_numpy(param).to(device)
+        self.rbf_name = "rbf{}".format(RBF.counter)
+        rbf_param = nn.parameter.Parameter(param_t)
+        curr_parameters = Parameters(self.rbf_name, rbf_param)
+
+        self.set_parameters(curr_parameters)
+        RBF.counter += 1
+    
+    def forward(self, x, y):
+        theta = eval("self.{}".format(self.rbf_name))
+        distance = th.cdist(x/theta[1:], y/theta[1:])
+        return theta[0] * th.exp( - distance ** 2 )
 
 class Matern(Kernel):
     '''
@@ -149,7 +297,52 @@ class Period(Kernel):
 class Constant(Kernel):
     '''
     '''
+    counter = 0
+    
+    def __init__(self, c:float):
+        super().__init__()
+        c = np.array([c]).reshape(-1,)
+        t = th.from_numpy(c).to(device)
+        self.cons_name = "cons{}".format(Constant.counter)
+        cons_c = nn.parameter.Parameter(t)
+        curr_parameters = Parameters(self.cons_name, cons_c)
+
+        self.set_parameters(curr_parameters)
+        Constant.counter += 1
+    
+    def forward(self, x, y):
+        return eval("self.{}".format(self.cons_name))
 
 class DotProduct(Kernel):
     '''
     '''
+    counter = 0
+    
+    def __init__(self, c:float):
+        super().__init__()
+        c = np.array([c]).reshape(-1,)
+        t = th.from_numpy(c).to(device)
+        self.dot_name = "dot{}".format(DotProduct.counter)
+        dot_c = nn.parameter.Parameter(t)
+        curr_parameters = Parameters(self.dot_name, dot_c)
+
+        self.set_parameters(curr_parameters)
+        Constant.counter += 1
+    
+    def forward(self, x, y):
+        return eval("self.{}".format(self.dot_name)) * th.einsum("ij,kj->ik", x, y)
+    
+    
+# those functionals were designed to use partial to bind parameters in computational graphs !
+def rbf(param, x, y):
+    distance = param[0] * th.cdist(x/param[1:], y/param[1:])
+    return th.exp( - distance ** 2 )
+
+def cons(param, x, y):
+    return param * 1.
+
+def dot(param, x, y):
+    return param * th.einsum("ij,kj->ik", x, y)
+
+def exponent(param, x, y):
+    return param * 1.
