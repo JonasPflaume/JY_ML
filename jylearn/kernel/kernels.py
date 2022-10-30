@@ -424,14 +424,14 @@ class Constant(Kernel):
         return eval("self.{}".format(self.cons_name))
 
 class DotProduct(Kernel):
-    ''' dot product kernel: x.T @ L @ x
+    ''' dot product kernel: theta * x.T @ y
         l - vector parameter is regarded as diagonal weighting matrix L
     '''
     counter = 0
     
-    def __init__(self, l:np.array, dim:int):
+    def __init__(self, c:float, dim:int):
         super().__init__()
-
+        l = np.array([c])
         t = th.from_numpy(l).to(device)
         self.dot_name = "dot{}".format(DotProduct.counter)
         dot_l = nn.parameter.Parameter(t)
@@ -443,7 +443,7 @@ class DotProduct(Kernel):
     def forward(self, x, y):
         assert x.shape[1] == self.input_dim, "wrong dimension."
         l = eval("self.{}".format(self.dot_name))
-        return th.einsum("ij,j,kj->ik", x, l, y)
+        return l * th.einsum("ij,kj->ik", x, y)
     
 class White(Kernel):
     ''' white noise kernel
@@ -465,9 +465,9 @@ class White(Kernel):
         assert x.shape[1] == self.input_dim, "wrong dimension."
         c = eval("self.{}".format(self.white_name))
         if x.shape==y.shape and th.all(x == y):
-            K = th.eye(x.shape[0]).to(device) * c
+            K = th.eye(x.shape[0]).double().to(device) * c
         else:
-            K = th.zeros((x.shape[0], y.shape[0])).to(device)
+            K = th.zeros((x.shape[0], y.shape[0])).double().to(device)
         return K
     
     
@@ -482,7 +482,7 @@ def cons(param, x, y):
     return param * 1.
 
 def dot(param, x, y):
-    return th.einsum("ij,j,kj->ik", x, param, y)
+    return param * th.einsum("ij,kj->ik", x, y)
 
 def exponent(param, x, y):
     return param * 1.
@@ -510,7 +510,7 @@ def matern(param, x, y):
 
 def white(param, x, y):
     if x.shape==y.shape and th.all(x == y):
-        K = th.eye(x.shape[0]).to(device) * param
+        K = th.eye(x.shape[0]).double().to(device) * param
     else:
-        K = th.zeros((x.shape[0], y.shape[0])).to(device)
+        K = th.zeros((x.shape[0], y.shape[0])).double().to(device)
     return K

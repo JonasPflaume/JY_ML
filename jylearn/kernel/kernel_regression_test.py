@@ -9,9 +9,9 @@ import matplotlib.pyplot as plt
 device = "cuda" if th.cuda.is_available() else "cpu"
 Loss = MSELoss()
 
-l = np.ones(1,) * 0.3
-train_data_num = 10 # play around those parameters
-kernel = (RQK(l=l, sigma=1., alpha=1000., dim=1) * RBF(l=l, sigma=1., dim=1))**2.9
+l = np.ones(1,) * 0.5
+train_data_num = 100 # play around those parameters
+kernel = RBF(l=l, sigma=1., dim=1)
 # kernel = Matern(l=l, sigma=1., mu=0.5, dim=1)
 
 # kernel regression
