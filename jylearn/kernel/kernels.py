@@ -1,10 +1,8 @@
 from abc import ABC
 from aifc import Error
-from ast import operator
 from collections import namedtuple, OrderedDict
 from copy import deepcopy
 from itertools import product
-from turtle import forward
 import torch as th
 import torch.nn as nn
 import numpy as np
@@ -148,6 +146,16 @@ class Kernel(nn.Module):
             raise KeyError("Parameters can only be accessed after they have been set.")
         
         return self.curr_parameters
+    
+    def diag(self, x):
+        """ only calc the diagonal terms of k(x,x)
+            NOTE: Not efficient !
+        """
+        n = x.shape[0]
+        diag_terms = []
+        for i in range(n):
+            diag_terms.append(self(x[i:i+1], x[i:i+1]))
+        return th.tensor(diag_terms).reshape(n,).to(device)
     
     def __add__(self, right):
         if not isinstance(right, Kernel):
@@ -437,6 +445,31 @@ class DotProduct(Kernel):
         l = eval("self.{}".format(self.dot_name))
         return th.einsum("ij,j,kj->ik", x, l, y)
     
+class White(Kernel):
+    ''' white noise kernel
+    '''
+    counter = 0
+    
+    def __init__(self, c:float, dim:int):
+        super().__init__()
+
+        t = th.from_numpy(np.array([c])).to(device)
+        self.white_name = "white{}".format(White.counter)
+        white_c = nn.parameter.Parameter(t)
+        curr_parameters = Parameters(self.white_name, white_c)
+        self.input_dim = dim
+        self.set_parameters(curr_parameters)
+        White.counter += 1
+    
+    def forward(self, x, y):
+        assert x.shape[1] == self.input_dim, "wrong dimension."
+        c = eval("self.{}".format(self.white_name))
+        if x.shape==y.shape and th.all(x == y):
+            K = th.eye(x.shape[0]).to(device) * c
+        else:
+            K = th.zeros((x.shape[0], y.shape[0])).to(device)
+        return K
+    
     
 # Those functionals were designed to used in computational graph calling.
 # This means that each kernel class will correspond to one of the functionals implemented below.
@@ -473,4 +506,11 @@ def matern(param, x, y):
         K = theta[0] * th.exp(-(dists**2) / 2.0)
     else:  
         raise NotImplementedError("General cases are expensive to evaluate, please use mu = 0.5, 1.5, 2.5 and Inf")
+    return K
+
+def white(param, x, y):
+    if x.shape==y.shape and th.all(x == y):
+        K = th.eye(x.shape[0]).to(device) * param
+    else:
+        K = th.zeros((x.shape[0], y.shape[0])).to(device)
     return K
