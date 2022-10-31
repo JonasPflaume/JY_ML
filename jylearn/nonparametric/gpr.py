@@ -34,9 +34,9 @@ class ExactGPR(Regression):
         if call_hyper_opt:
             evidence = float("-inf")
             self.kernel.train()
-            pbar = tqdm(range(2000), desc =str(evidence))
+            pbar = tqdm(range(3000), desc =str(evidence))
             for _ in pbar:
-                optimizer = Adam(params=self.kernel.parameters(), lr=1e-3)
+                optimizer = Adam(params=self.kernel.parameters(), lr=5e-3)
                 optimizer.zero_grad()
                 evidence = ExactGPR.evidence(self.kernel, X, Y)
                 loss = - evidence
@@ -107,19 +107,20 @@ class ExactGPR(Regression):
 if __name__ == "__main__":
     # test
     import matplotlib.pyplot as plt
-    from jylearn.kernel.kernels import RBF, White, Matern, DotProduct, Constant, RQK
+    from jylearn.kernel.kernels import RBF, White, Matern, DotProduct, RQK, Constant
     import numpy as np
     th.manual_seed(0)
     
     l = np.ones(1,) * 1.0
-    kernel = White(dim=1, c=0.5) + RBF(dim=1, sigma=1., l=l) + DotProduct(dim=1, c=1.)
+    kernel = White(dim=1, c=10.) + RQK(dim=1, l=l, alpha=10., sigma=1.) +\
+        DotProduct(dim=1, c=0.1) * White(dim=1, c=0.1) + Constant(dim=1, c=10.)
     gpr = ExactGPR(kernel=kernel)
     
-    train_data_num = 200 # bug? when n=100
+    train_data_num = 250 # bug? when n=100
     X = th.linspace(-5,5,100).reshape(-1,1).to(device).double()
     Y = th.cos(X)
     Xtrain = th.linspace(-5,5,train_data_num).reshape(-1,1).to(device).double()
-    Ytrain = th.cos(Xtrain) + th.randn(train_data_num,1).to(device).double() * 0.4
+    Ytrain = th.cos(Xtrain) + Xtrain * th.randn(train_data_num,1).to(device).double() * 0.2
     
     gpr.fit(Xtrain, Ytrain, call_hyper_opt=True)
     print( list(gpr.kernel.parameters()) )
