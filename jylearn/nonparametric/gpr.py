@@ -42,7 +42,7 @@ class ExactGPR(Regression):
                 loss = - evidence
                 loss.backward()
                 optimizer.step()
-                pbar.set_description(str(evidence.item()))
+                pbar.set_description("{:.2f}".format(evidence.item()))
             self.kernel.eval()
             self.kernel.stop_autograd()
         
