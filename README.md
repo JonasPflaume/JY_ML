@@ -4,6 +4,7 @@ The gym **pendulum** environment is chosen to be the benchmark of control projec
   
   
 Update: 31.11.2022, finished the kernel classes enabling the kernel operations (add, multiply and exponent). A Gaussian process regressor has been implemented to validate the performance of compounding kernel on an artificial dataset with state depend noise.  
+![A GPR modelling of state dependent noise](jylearn/nonparametric/state_dependent_noise.png)
 
 Finished functions:
 #### Machine learning  
