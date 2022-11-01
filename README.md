@@ -3,10 +3,10 @@ The **SARCOS** dataset, which is intended for a regression problem of robot inve
 The gym **pendulum** environment is chosen to be the benchmark of control project.
   
   
-Update: 31.11.2022, finished the kernel classes enabling the kernel operations (add, multiply and exponent). A Gaussian process regressor has been implemented to validate the performance of compounding kernel on an artificial dataset with state depend noise.  
+Update: 31.11.2022, the kernel classes enabling the kernel operations (add, multiply and exponent) has been finished. A Gaussian process regressor has been implemented to validate the performance of compounding kernel on an artificial dataset with state dependent noise.  
 <img src="jylearn/nonparametric/state_dependent_noise.png" alt="drawing" width="500"/>
 
-Finished functions:
+Finished comparison:
 #### Machine learning  
 | Approach      | MSE           |
 | ------------- |:-------------:|
