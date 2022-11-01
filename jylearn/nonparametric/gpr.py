@@ -34,9 +34,9 @@ class ExactGPR(Regression):
         if call_hyper_opt:
             evidence = float("-inf")
             self.kernel.train()
-            pbar = tqdm(range(3000), desc =str(evidence))
+            pbar = tqdm(range(6000), desc =str(evidence))
             for _ in pbar:
-                optimizer = Adam(params=self.kernel.parameters(), lr=5e-3)
+                optimizer = Adam(params=self.kernel.parameters(), lr=2e-3)
                 optimizer.zero_grad()
                 evidence = ExactGPR.evidence(self.kernel, X, Y)
                 loss = - evidence
@@ -113,28 +113,31 @@ if __name__ == "__main__":
     
     l = np.ones(1,) * 1.0
     kernel = White(dim=1, c=10.) + RQK(dim=1, l=l, alpha=10., sigma=1.) +\
-        DotProduct(dim=1, c=0.1) * White(dim=1, c=0.1) + Constant(dim=1, c=10.)
+        DotProduct(dim=1, c=0.1) * White(dim=1, c=0.1) + Constant(dim=1, c=20.)
     gpr = ExactGPR(kernel=kernel)
     
     train_data_num = 250 # bug? when n=100
     X = th.linspace(-5,5,100).reshape(-1,1).to(device).double()
     Y = th.cos(X)
     Xtrain = th.linspace(-5,5,train_data_num).reshape(-1,1).to(device).double()
-    Ytrain = th.cos(Xtrain) + Xtrain * th.randn(train_data_num,1).to(device).double() * 0.2
+    Ytrain = th.cos(Xtrain) + Xtrain * th.randn(train_data_num,1).to(device).double() * 0.2 # add state dependent noise
     
     gpr.fit(Xtrain, Ytrain, call_hyper_opt=True)
     print( list(gpr.kernel.parameters()) )
     import time
     s = time.time()
-    for i in range(100):
+    for i in range(20):
         mean, var = gpr.predict(X, return_var=True)
     e = time.time()
     print("The time for each pred: %.5f" % ((e-s)/100))
-    plt.plot(X.detach().cpu().numpy(), mean.detach().cpu().numpy(), label="Prediction")
-    plt.plot(X.detach().cpu().numpy(), mean.detach().cpu().numpy() + 3*var.detach().cpu().numpy(), '-.r', label="Var")
+    plt.figure(figsize=[10,7])
+    plt.plot(X.detach().cpu().numpy(), mean.detach().cpu().numpy(), label="mean")
+    plt.plot(X.detach().cpu().numpy(), mean.detach().cpu().numpy() + 3*var.detach().cpu().numpy(), '-.r', label="var")
     plt.plot(X.detach().cpu().numpy(), mean.detach().cpu().numpy() - 3*var.detach().cpu().numpy(), '-.r')
     plt.plot(X.detach().cpu().numpy(), Y.detach().cpu().numpy(), label="GroundTueth")
-    plt.plot(Xtrain.detach().cpu().numpy(), Ytrain.detach().cpu().numpy(), 'rx', label="data", alpha=0.3)
+    plt.plot(Xtrain.detach().cpu().numpy(), Ytrain.detach().cpu().numpy(), 'rx', label="data", alpha=0.5)
     plt.grid()
+    plt.xlabel("Input")
+    plt.ylabel("Output")
     plt.legend()
     plt.show()
