@@ -140,4 +140,5 @@ if __name__ == "__main__":
     plt.xlabel("Input")
     plt.ylabel("Output")
     plt.legend()
+    plt.tight_layout()
     plt.show()
