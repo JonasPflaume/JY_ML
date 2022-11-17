@@ -1,6 +1,6 @@
 ### JY's machine learning and control workspace, 
 The **SARCOS** dataset, which is intended for a regression problem of robot inverse dynamics, is regarded as the benchmark of ML.  
-The gym **pendulum** environment is chosen to be the benchmark of control project.
+The gym **pendulum** environment is chosen to be the benchmark of control projects.
   
   
 Update: 31.11.2022, the kernel classes enabling the kernel operations (add, multiply and exponent) has been finished. A Gaussian process regressor has been implemented to validate the performance of compounding kernel on an artificial dataset with state dependent noise.  
