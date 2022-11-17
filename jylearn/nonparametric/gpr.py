@@ -17,7 +17,7 @@ class ExactGPR(Regression):
         '''
         self.kernel = kernel
 
-    def fit(self, X, Y, call_hyper_opt=False):
+    def fit(self, X, Y, call_hyper_opt=False, **kwargs):
         '''
         '''
         if len(X.shape) == 1:
@@ -31,12 +31,13 @@ class ExactGPR(Regression):
         self._X = X.clone().detach()
         # call the hyperparameter optimization
         
-        if call_hyper_opt:
+        if call_hyper_opt: # TODO not effective optimizer, use lbfgs instead! 
+            lr, epoch = kwargs.get("lr"), kwargs.get("epoch")
             evidence = float("-inf")
             self.kernel.train()
-            pbar = tqdm(range(6000), desc =str(evidence))
+            pbar = tqdm(range(epoch), desc =str(evidence))
             for _ in pbar:
-                optimizer = Adam(params=self.kernel.parameters(), lr=2e-3)
+                optimizer = Adam(params=self.kernel.parameters(), lr=lr)
                 optimizer.zero_grad()
                 evidence = ExactGPR.evidence(self.kernel, X, Y)
                 loss = - evidence
@@ -109,6 +110,9 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     from jylearn.kernel.kernels import RBF, White, Matern, DotProduct, RQK, Constant
     import numpy as np
+    from torch.nn import MSELoss
+    Loss = MSELoss()
+    
     th.manual_seed(0)
     
     l = np.ones(1,) * 1.0
@@ -122,7 +126,7 @@ if __name__ == "__main__":
     Xtrain = th.linspace(-5,5,train_data_num).reshape(-1,1).to(device).double()
     Ytrain = th.cos(Xtrain) + Xtrain * th.randn(train_data_num,1).to(device).double() * 0.2 # add state dependent noise
     
-    gpr.fit(Xtrain, Ytrain, call_hyper_opt=True)
+    gpr.fit(Xtrain, Ytrain, call_hyper_opt=True, lr=2e-3, epoch=6000)
     print( list(gpr.kernel.parameters()) )
     import time
     s = time.time()
@@ -130,6 +134,8 @@ if __name__ == "__main__":
         mean, var = gpr.predict(X, return_var=True)
     e = time.time()
     print("The time for each pred: %.5f" % ((e-s)/100))
+    L = Loss(mean, th.cos(mean))
+    print("Loss MSE: %.2f" %  L)
     plt.figure(figsize=[10,7])
     plt.plot(X.detach().cpu().numpy(), mean.detach().cpu().numpy(), label="mean")
     plt.plot(X.detach().cpu().numpy(), mean.detach().cpu().numpy() + 3*var.detach().cpu().numpy(), '-.r', label="var")

@@ -107,7 +107,7 @@ if __name__ == "__main__":
     
     p = Pendulum()
     
-    dis_dim = 15
+    dis_dim = 20
     x1 = np.linspace(-3.*np.pi, 3.*np.pi, dis_dim)
     x2 = np.linspace(-8, 8, dis_dim)
     X_sub = np.concatenate(list(product(x1, x2)) ).reshape(-1, 2)
@@ -120,7 +120,7 @@ if __name__ == "__main__":
     
     # 500 trajs, each has 200 steps.
     # This is designed to has the same env quiries with RL controller SAC.
-    X_l, U_l = collect_rollouts(p, 100, 100)
+    X_l, U_l = collect_rollouts(p, 500, 100)
     # with open('train_data.pkl','wb') as f:
     #     pickle.dump([X_l, U_l], f)
         
