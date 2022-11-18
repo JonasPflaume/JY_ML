@@ -154,8 +154,10 @@ class Kernel(nn.Module):
         n = x.shape[0]
         diag_terms = []
         for i in range(n):
-            diag_terms.append(self(x[i:i+1], x[i:i+1]))
-        return th.tensor(diag_terms).reshape(n,).to(device)
+            term_i = self(x[i:i+1], x[i:i+1]).detach().cpu().numpy()
+            diag_terms.append(term_i)
+        diag_terms = np.array(diag_terms).squeeze(axis=(2,3))
+        return th.from_numpy(diag_terms).to(device)
     
     def __add__(self, right):
         if not isinstance(right, Kernel):
@@ -245,8 +247,10 @@ class Sum(Kernel, CompoundKernel):
             raise TypeError("Operands should be kernels")
         
         assert kernel1.input_dim == kernel2.input_dim, "please align the input dimenstion."
+        assert kernel1.output_dim == kernel2.output_dim, "please align the input dimenstion."
         
         self.input_dim = kernel1.input_dim
+        self.output_dim = kernel1.output_dim
         parameters_table1 = CopiedParameter(kernel1.get_parameters())
         parameters_table2 = kernel2.get_parameters()
         
@@ -272,8 +276,9 @@ class Product(Kernel, CompoundKernel):
             raise TypeError("Operands should be kernels")
         
         assert kernel1.input_dim == kernel2.input_dim, "please align the input dimenstion."
-        
+        assert kernel1.output_dim == kernel2.output_dim, "please align the input dimenstion."
         self.input_dim = kernel1.input_dim
+        self.output_dim = kernel1.output_dim
         parameters_table1 = CopiedParameter(kernel1.get_parameters())
         parameters_table2 = kernel2.get_parameters()
         
@@ -301,6 +306,7 @@ class Exponentiation(Kernel, CompoundKernel):
             raise TypeError("exponent_factor should be a float")
         
         self.input_dim = kernel1.input_dim
+        self.output_dim = kernel1.output_dim
         parameters_table1 = CopiedParameter(kernel1.get_parameters())
         exponent_factor_t = th.tensor([exponent_factor]).to(device)
         exponent_factor_param = nn.parameter.Parameter(exponent_factor_t)
@@ -318,62 +324,82 @@ class Exponentiation(Kernel, CompoundKernel):
         operation_res = self.evaluate_operation_dict(self.operation_dict, x, y)
         return next(reversed(operation_res.values()))
 
-
 class RBF(Kernel):
     ''' RBF kernel
     '''
     counter = 0
     
-    def __init__(self, sigma:float, l:np.ndarray, dim:int):
+    def __init__(self, sigma:np.ndarray, l:np.ndarray, dim_in:int, dim_out:int):
+        ''' dim_in:     the dimension of input x
+            dim_out:    the dimension of output y
+            l:          the kernel length should be in (dim_in, dim_out) shape
+        '''
         super().__init__()
-        param = np.concatenate([np.array([sigma]), l])
+        param = np.concatenate([sigma, l.flatten()])
         param_t = th.from_numpy(param).to(device)
         self.rbf_name = "rbf{}".format(RBF.counter)
         rbf_param = nn.parameter.Parameter(param_t)
         curr_parameters = Parameters(self.rbf_name, rbf_param)
 
         self.set_parameters(curr_parameters)
-        assert dim == len(l), "wrong dimension."
-        self.input_dim = dim
+        assert (dim_in, dim_out) == l.shape, "wrong dimension."
+        assert dim_out == len(sigma), "wrong dimension."
+        self.input_dim = dim_in
+        self.output_dim = dim_out
         RBF.counter += 1
     
     def forward(self, x, y):
         assert x.shape[1] == self.input_dim, "wrong dimension."
         theta = eval("self.{}".format(self.rbf_name))
-        distance = th.cdist(x/theta[1:], y/theta[1:])
-        return theta[0] * th.exp( - distance ** 2 )
+        sigma = theta[:self.output_dim].view(self.output_dim, 1, 1)
+        l = theta[self.output_dim:].view(self.input_dim, self.output_dim)
+        x, y = x.view(x.shape[0], x.shape[1], 1), y.view(y.shape[0], y.shape[1], 1)
+        x = (x/l).permute(2,0,1) # shape: (ny, N, nx)
+        y = (y/l).permute(2,0,1) # shape: (ny, M, nx), let's regard ny axis as batch
+        distance = th.cdist(x, y) # (ny, N, M)
+        return sigma * th.exp( - distance ** 2 )
 
 class Matern(Kernel):
     ''' Matern kernel
     '''
     counter = 0
     
-    def __init__(self, sigma:float, mu:float, l:np.ndarray, dim:int):
+    def __init__(self, sigma:np.ndarray, mu:float, l:np.ndarray, dim_in:int, dim_out:int):
         super().__init__()
-        param = np.concatenate([np.array([sigma, mu]), l])
+        param = np.concatenate([sigma, np.array([mu]), l.flatten()])
         param_t = th.from_numpy(param).to(device)
         self.matern_name = "matern{}".format(Matern.counter)
         matern_param = nn.parameter.Parameter(param_t)
         curr_parameters = Parameters(self.matern_name, matern_param)
 
         self.set_parameters(curr_parameters)
-        assert dim == len(l), "wrong dimension."
-        self.input_dim = dim
+        assert (dim_in, dim_out) == l.shape, "wrong dimension."
+        assert dim_out == len(sigma), "wrong dimension."
+        self.input_dim = dim_in
+        self.output_dim = dim_out
         Matern.counter += 1
     
     def forward(self, x, y):
+        assert x.shape[1] == self.input_dim, "wrong dimension."
         theta = eval("self.{}".format(self.matern_name))
-        dists = th.cdist(x / theta[2:], y / theta[2:])
-        if theta[1] == 0.5:
-            K = theta[0] * th.exp(-dists)
-        elif theta[1] == 1.5:
+        sigma = theta[:self.output_dim].view(self.output_dim, 1, 1)
+        mu = theta[self.output_dim:self.output_dim+1]
+        l = theta[self.output_dim+1:].view(self.input_dim, self.output_dim)
+        
+        x, y = x.view(x.shape[0], x.shape[1], 1), y.view(y.shape[0], y.shape[1], 1)
+        x = (x/l).permute(2,0,1) # shape: (ny, N, nx)
+        y = (y/l).permute(2,0,1) # shape: (ny, M, nx), let's regard ny axis as batch
+        dists = th.cdist(x, y) # (ny, N, M)
+        if mu == 0.5:
+            K = sigma * th.exp(-dists)
+        elif mu == 1.5:
             K = dists * th.sqrt(th.tensor([3.]).to(device))
-            K = theta[0] * (1.0 + K) * th.exp(-K)
-        elif theta[1] == 2.5:
+            K = sigma * (1.0 + K) * th.exp(-K)
+        elif mu == 2.5:
             K = dists * th.sqrt(th.tensor([5.]).to(device))
-            K = theta[0] * (1.0 + K + K**2 / 3.0) * th.exp(-K)
-        elif th.isinf(theta[1]):
-            K = theta[0] * th.exp(-(dists**2) / 2.0)
+            K = sigma * (1.0 + K + K**2 / 3.0) * th.exp(-K)
+        elif th.isinf(mu):
+            K = sigma * th.exp(-(dists**2) / 2.0)
         else:  
             raise NotImplementedError("General cases are expensive to evaluate, please use mu = 0.5, 1.5, 2.5 and Inf")
         return K
@@ -383,45 +409,59 @@ class RQK(Kernel):
     '''
     counter = 0
     
-    def __init__(self, sigma:float, alpha:float, l:np.ndarray, dim:int):
+    def __init__(self, sigma:np.ndarray, alpha:np.ndarray, l:np.ndarray, dim_in:int, dim_out:int):
         super().__init__()
-        param = np.concatenate([np.array([sigma]), np.array([alpha]), l])
+        param = np.concatenate([sigma, alpha, l.flatten()])
         param_t = th.from_numpy(param).to(device)
         self.rqk_name = "rqk{}".format(RBF.counter)
         rqk_param = nn.parameter.Parameter(param_t)
         curr_parameters = Parameters(self.rqk_name, rqk_param)
 
         self.set_parameters(curr_parameters)
-        assert dim == len(l), "wrong dimension."
-        self.input_dim = dim
+        assert (dim_in, dim_out) == l.shape, "wrong dimension."
+        assert dim_out == len(sigma), "wrong dimension."
+
+        self.input_dim = dim_in
+        self.output_dim = dim_out
         RQK.counter += 1
     
     def forward(self, x, y):
         assert x.shape[1] == self.input_dim, "wrong dimension."
         theta = eval("self.{}".format(self.rqk_name))
-        distance = th.cdist(x/theta[2:], y/theta[2:])
-        return theta[0] * ( 1 + distance ** 2 / theta[1] ) ** (-theta[1])
+        sigma = theta[:self.output_dim].view(self.output_dim, 1, 1)
+        alpha = theta[self.output_dim:2*self.output_dim].view(self.output_dim, 1, 1)
+        l = theta[2*self.output_dim:].view(self.input_dim, self.output_dim)
+        
+        x, y = x.view(x.shape[0], x.shape[1], 1), y.view(y.shape[0], y.shape[1], 1)
+        x = (x/l).permute(2,0,1) # shape: (ny, N, nx)
+        y = (y/l).permute(2,0,1) # shape: (ny, M, nx), let's regard ny axis as batch
+        distance = th.cdist(x, y) # (ny, N, M)
+        return sigma * ( 1 + distance ** 2 / alpha ) ** (-alpha)
     
 class Constant(Kernel):
     ''' constant kernel
     '''
     counter = 0
     
-    def __init__(self, c:float, dim):
+    def __init__(self, c:np.ndarray, dim_in:int, dim_out:int):
         super().__init__()
-        c = np.array([c]).reshape(-1,)
+        assert dim_out == len(c), "wrong dimension."
         t = th.from_numpy(c).to(device)
         self.cons_name = "cons{}".format(Constant.counter)
         cons_c = nn.parameter.Parameter(t)
         curr_parameters = Parameters(self.cons_name, cons_c)
 
-        self.input_dim = dim
+        self.input_dim = dim_in
+        self.output_dim = dim_out
         self.set_parameters(curr_parameters)
+        
         Constant.counter += 1
     
     def forward(self, x, y):
         assert x.shape[1] == self.input_dim, "wrong dimension."
-        return eval("self.{}".format(self.cons_name))
+        c = eval("self.{}".format(self.cons_name))
+        c = c.view(self.output_dim, 1, 1)
+        return c * th.ones(self.output_dim, len(x), len(y)).to(device)
 
 class DotProduct(Kernel):
     ''' dot product kernel: theta * x.T @ y
@@ -429,88 +469,137 @@ class DotProduct(Kernel):
     '''
     counter = 0
     
-    def __init__(self, c:float, dim:int):
+    def __init__(self, c:np.ndarray, dim_in:int, dim_out:int):
         super().__init__()
-        l = np.array([c])
+        assert dim_out == len(c), "wrong dimension."
+        l = c
         t = th.from_numpy(l).to(device)
         self.dot_name = "dot{}".format(DotProduct.counter)
         dot_l = nn.parameter.Parameter(t)
         curr_parameters = Parameters(self.dot_name, dot_l)
-        self.input_dim = dim
+        
+        self.input_dim = dim_in
+        self.output_dim = dim_out
         self.set_parameters(curr_parameters)
         Constant.counter += 1
     
     def forward(self, x, y):
         assert x.shape[1] == self.input_dim, "wrong dimension."
         l = eval("self.{}".format(self.dot_name))
-        return l * th.einsum("ij,kj->ik", x, y)
+        l = l.view(self.output_dim, 1, 1)
+        dot_res = th.einsum("ij,kj->ik", x, y)
+        dot_res = dot_res.unsqueeze(0).repeat(self.output_dim, 1, 1)
+        return l * dot_res
     
 class White(Kernel):
     ''' white noise kernel
     '''
     counter = 0
     
-    def __init__(self, c:float, dim:int):
+    def __init__(self, c:np.ndarray, dim_in:int, dim_out:int):
         super().__init__()
-
-        t = th.from_numpy(np.array([c])).to(device)
+        assert dim_out == len(c), "wrong dimension."
+        t = c
+        t = th.from_numpy(t).to(device)
         self.white_name = "white{}".format(White.counter)
         white_c = nn.parameter.Parameter(t)
         curr_parameters = Parameters(self.white_name, white_c)
-        self.input_dim = dim
+        
+        self.input_dim = dim_in
+        self.output_dim = dim_out
         self.set_parameters(curr_parameters)
         White.counter += 1
     
     def forward(self, x, y):
         assert x.shape[1] == self.input_dim, "wrong dimension."
         c = eval("self.{}".format(self.white_name))
+        c = c.view(self.output_dim, 1, 1)
         if x.shape==y.shape and th.all(x == y):
-            K = th.eye(x.shape[0]).double().to(device) * c
+            K = c * th.eye(x.shape[0]).double().to(device).unsqueeze(0).repeat(self.output_dim, 1, 1)
         else:
-            K = th.zeros((x.shape[0], y.shape[0])).double().to(device)
+            K = th.zeros((self.output_dim, x.shape[0], y.shape[0])).double().to(device)
         return K
     
     
 # Those functionals were designed to used in computational graph calling.
-# This means that each kernel class will correspond to one of the functionals implemented below.
+# This means that each kernel class will have a functional implemented below.
 
 def rbf(param, x, y):
-    distance = param[0] * th.cdist(x/param[1:], y/param[1:])
-    return th.exp( - distance ** 2 )
+    input_dim = x.shape[1]
+    output_dim = int( len(param) / (input_dim + 1) )
+
+    sigma = param[:output_dim].view(output_dim, 1, 1)
+    l = param[output_dim:].view(input_dim, output_dim)
+    x, y = x.view(x.shape[0], x.shape[1], 1), y.view(y.shape[0], y.shape[1], 1)
+    x = (x/l).permute(2,0,1) # shape: (ny, N, nx)
+    y = (y/l).permute(2,0,1) # shape: (ny, M, nx), let's regard ny axis as batch
+    distance = th.cdist(x, y) # (ny, N, M)
+    return sigma * th.exp( - distance ** 2 )
 
 def cons(param, x, y):
-    return param * 1.
+    output_dim = len(param)
+    c = param
+    c = c.view(output_dim, 1, 1)
+    return c * th.ones(output_dim, len(x), len(y)).to(device)
 
 def dot(param, x, y):
-    return param * th.einsum("ij,kj->ik", x, y)
+    output_dim = len(param)
+    l = param
+    l = l.view(output_dim, 1, 1)
+    dot_res = th.einsum("ij,kj->ik", x, y)
+    dot_res = dot_res.unsqueeze(0).repeat(output_dim, 1, 1)
+    return l * dot_res
 
 def exponent(param, x, y):
     return param * 1.
 
 def rqk(param, x, y):
-    distance = th.cdist(x/param[2:], y/param[2:])
-    return param[0] * ( 1 + distance ** 2 / param[1] ) ** (-param[1])
+    input_dim = x.shape[1]
+    output_dim = int( len(param) / (input_dim + 2) )
+
+    theta = param
+    sigma = theta[:output_dim].view(output_dim, 1, 1)
+    alpha = theta[output_dim:2*output_dim].view(output_dim, 1, 1)
+    l = theta[2*output_dim:].view(input_dim, output_dim)
+    
+    x, y = x.view(x.shape[0], x.shape[1], 1), y.view(y.shape[0], y.shape[1], 1)
+    x = (x/l).permute(2,0,1) # shape: (ny, N, nx)
+    y = (y/l).permute(2,0,1) # shape: (ny, M, nx), let's regard ny axis as batch
+    distance = th.cdist(x, y) # (ny, N, M)
+    return sigma * ( 1 + distance ** 2 / alpha ) ** (-alpha)
 
 def matern(param, x, y):
+    input_dim = x.shape[1]
+    output_dim = int( (len(param)-1) / (input_dim + 1) )
     theta = param
-    dists = th.cdist(x / theta[2:], y / theta[2:])
-    if theta[1] == 0.5:
-        K = theta[0] * th.exp(-dists)
-    elif theta[1] == 1.5:
+    sigma = theta[:output_dim].view(output_dim, 1, 1)
+    mu = theta[output_dim:output_dim+1]
+    l = theta[output_dim+1:].view(input_dim, output_dim)
+    
+    x, y = x.view(x.shape[0], x.shape[1], 1), y.view(y.shape[0], y.shape[1], 1)
+    x = (x/l).permute(2,0,1) # shape: (ny, N, nx)
+    y = (y/l).permute(2,0,1) # shape: (ny, M, nx), let's regard ny axis as batch
+    dists = th.cdist(x, y) # (ny, N, M)
+    if mu == 0.5:
+        K = sigma * th.exp(-dists)
+    elif mu == 1.5:
         K = dists * th.sqrt(th.tensor([3.]).to(device))
-        K = theta[0] * (1.0 + K) * th.exp(-K)
-    elif theta[1] == 2.5:
+        K = sigma * (1.0 + K) * th.exp(-K)
+    elif mu == 2.5:
         K = dists * th.sqrt(th.tensor([5.]).to(device))
-        K = theta[0] * (1.0 + K + K**2 / 3.0) * th.exp(-K)
-    elif th.isinf(theta[1]):
-        K = theta[0] * th.exp(-(dists**2) / 2.0)
-    else:  
+        K = sigma * (1.0 + K + K**2 / 3.0) * th.exp(-K)
+    elif th.isinf(mu):
+        K = sigma * th.exp(-(dists**2) / 2.0)
+    else:
         raise NotImplementedError("General cases are expensive to evaluate, please use mu = 0.5, 1.5, 2.5 and Inf")
     return K
 
 def white(param, x, y):
+    output_dim = len(param)
+    c = param
+    c = c.view(output_dim, 1, 1)
     if x.shape==y.shape and th.all(x == y):
-        K = th.eye(x.shape[0]).double().to(device) * param
+        K = c * th.eye(x.shape[0]).double().to(device).unsqueeze(0).repeat(output_dim, 1, 1)
     else:
-        K = th.zeros((x.shape[0], y.shape[0])).double().to(device)
+        K = th.zeros((output_dim, x.shape[0], y.shape[0])).double().to(device)
     return K

@@ -10,7 +10,6 @@ class RBF:
     def __call__(self, x):
         return np.exp(-self.h * (x - self.c) ** 2 )
 
-
 def integrate_RK4(start, ODEFunc, dt):
     ''' RungKutta 4th order method
     '''

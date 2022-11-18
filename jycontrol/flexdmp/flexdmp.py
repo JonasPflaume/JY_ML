@@ -8,7 +8,7 @@ class FlexDMP:
         This DMP was implemented in vectorized form,
         unlike the implemented vanilla DMP
     '''
-    def __init__(self, bf_num, demo_len, demo_dt, p=3., w_factor=8.5, tau=1., dof=1, linear_decay=True): # p=23, w = 1.3 better for peak violation!
+    def __init__(self, bf_num, demo_len, demo_dt, p=2.5, w_factor=1.5, tau=1., dof=1, linear_decay=True): # p=23, w = 1.3 better for peak violation!
         '''
         bf_num:     The number of Psi activation points
         demo_len:   The length of the trajectory
@@ -169,16 +169,31 @@ class FlexDMP:
     
 if __name__ == "__main__":
     # example
-    X = np.linspace(-3.14, 3.14, 100)
+    X = np.linspace(0., 6.28, 100)
     Y = np.sin(X) + np.cos(0.5*X) + np.cos(2*X)
+    dY = np.cos(X) - 0.5*np.sin(0.5*X) - 2*np.sin(2*X)
+    ddY = -np.sin(X) - 0.25*np.cos(0.5*X) - 4*np.cos(2*X)
     Y = Y.reshape(-1,1)
+    dY = dY.reshape(-1,1)
+    ddY = ddY.reshape(-1,1)
     
     import matplotlib.pyplot as plt
     
-    dmp = FlexDMP(15, len(X), 2*np.pi/100)
-    dmp.get_weights(y_demo=Y)
+    dmp = FlexDMP(15, len(X), 6.28/100)
+    dmp.get_weights(y_demo=Y, dy_demo=dY, ddy_demo=ddY)
     Y_, dY_, ddY_ = dmp.trajectory()
+    plt.figure(figsize=[7,10])
+    plt.subplot(311)
     plt.plot(X, Y, '-.r')
     plt.plot(X, Y_, '-b')
     plt.grid()
+    plt.subplot(312)
+    plt.plot(X, dY, '-.r')
+    plt.plot(X, dY_, '-b')
+    plt.grid()
+    plt.subplot(313)
+    plt.plot(X, ddY, '-.r')
+    plt.plot(X, ddY_, '-b')
+    plt.grid()
+    plt.tight_layout()
     plt.show()

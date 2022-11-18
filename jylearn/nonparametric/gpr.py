@@ -31,7 +31,7 @@ class ExactGPR(Regression):
         self._X = X.clone().detach()
         # call the hyperparameter optimization
         
-        if call_hyper_opt: # TODO not effective optimizer, use lbfgs instead! 
+        if call_hyper_opt:
             lr, epoch = kwargs.get("lr"), kwargs.get("epoch")
             evidence = float("-inf")
             self.kernel.train()
@@ -47,19 +47,23 @@ class ExactGPR(Regression):
             self.kernel.eval()
             self.kernel.stop_autograd()
         
-        K = self.kernel(X, X) # K has shape (n,n) number of data
+        K = self.kernel(X, X) # K has shape (ny, n, n)
         try:
-            u = th.cholesky(K)
+            u = th.cholesky(K) # u has shape (ny, n, n)
         except:
             print("The cho_factor meet singular matrix, now add damping...")
-            K += th.eye(K.shape[0]).to(device) * 1e-8
-            u = th.cholesky(K)
+            K += th.eye(K.shape[0]).unsqueeze(0).repeat(m, 1, 1).to(device) * 1e-8
+            u = th.cholesky(K) # u has shape (ny, n, n)
         
-        self.alpha = th.cholesky_solve(Y, u) # (n,n_y) yd-output space dim, important -> cho_solve
-        self.L = u
+        Y = Y.permute(1, 0)
+        Y = Y.unsqueeze(2)
+        self.alpha = th.cholesky_solve(Y, u) # (ny, n, 1) solve ny linear system independently
+        self.L = u # shape (ny, n, n)
         
         # print the margianl likelyhood
-        evidence = - 0.5 * th.einsum("ik,ik->k", Y, self.alpha) - th.log(th.diagonal(self.L)).sum() - n / 2 * th.log(2*th.tensor([th.pi]).to(device))
+        # Y (ny, n, 1), alpha (ny, n, 1), L (ny, n, n)
+        diagonal_term = th.log(th.diagonal(self.L, dim1=1, dim2=2)).sum(dim=1)
+        evidence = - 0.5 * th.einsum("ijk,ijk->i", Y, self.alpha) - diagonal_term - n / 2 * th.log(2*th.tensor([th.pi]).to(device))
         evidence = evidence.sum(axis=-1)
         print("The evidence is: ", evidence)
         del K, u, evidence
@@ -68,19 +72,25 @@ class ExactGPR(Regression):
     @staticmethod
     def evidence(kernel, X, Y):
         n = X.shape[0]
-        K = kernel(X, X) # K has shape (n,n) number of data
+        m = Y.shape[1] # output dimension
+
+        K = kernel(X, X) # K has shape (ny, n, n)
         try:
-            u = th.cholesky(K)
+            u = th.cholesky(K) # u has shape (ny, n, n)
         except:
             print("The cho_factor meet singular matrix, now add damping...")
-            K += th.eye(K.shape[0]).to(device) * 1e-8
-            u = th.cholesky(K)
-        
-        alpha = th.cholesky_solve(Y, u) # (n,n_y) yd-output space dim, important -> cho_solve
-        L = u
+            K += th.eye(K.shape[0]).unsqueeze(0).repeat(m, 1, 1).to(device) * 1e-8
+            u = th.cholesky(K) # u has shape (ny, n, n)
+            
+        Y = Y.permute(1, 0)
+        Y = Y.unsqueeze(2)
+        alpha = th.cholesky_solve(Y, u) # (ny, n, 1) solve ny linear system independently
+        L = u # shape (ny, n, n)
         
         # print the margianl likelyhood
-        evidence = - 0.5 * th.einsum("ik,ik->k", Y, alpha) - th.log(th.diagonal(L)).sum() - n / 2 * th.log(2*th.tensor([th.pi]).to(device))
+        # Y (ny, n, 1), alpha (ny, n, 1), L (ny, n, n)
+        diagonal_term = th.log(th.diagonal(L, dim1=1, dim2=2)).sum(dim=1)
+        evidence = - 0.5 * th.einsum("ijk,ijk->i", Y, alpha) - diagonal_term - n / 2 * th.log(2*th.tensor([th.pi]).to(device))
         evidence = evidence.sum(axis=-1)
         return evidence
     
@@ -91,15 +101,17 @@ class ExactGPR(Regression):
             # in case the data is 1-d
             x = x.reshape(-1,1)
             
-        k = self.kernel(x, self._X) # (n_x, n)
-        mean = k @ self.alpha
+        k = self.kernel(x, self._X) # (ny, n_*, n), alpha: (ny, n, 1)
+        mean = th.einsum("ijk,ikb->ji", k, self.alpha)
         if return_var:
-            v = th.triangular_solve(k.T, self.L, upper=False)[0]
-            prior_std = self.kernel.diag(x)
-            var = prior_std - th.einsum("ij,ji->i", v.T, v)
+            k = k.permute(0,2,1)
+            v = th.triangular_solve(k, self.L, upper=False)[0] # (ny, n, n_*)
+            v = v.permute(2, 0, 1) # (n_*, ny, n)
+            prior_std = self.kernel.diag(x) # the diag in kernel base class changed. (n_*, ny)
+            var = prior_std - th.einsum("ijk,ijk->ij", v, v)
             del k, v, prior_std
             th.cuda.empty_cache()
-            return mean, var.reshape(-1,1)
+            return mean, var.reshape(-1,self.kernel.output_dim)
         else:
             del k
             th.cuda.empty_cache()
@@ -112,39 +124,61 @@ if __name__ == "__main__":
     import numpy as np
     from torch.nn import MSELoss
     Loss = MSELoss()
-    
+    np.random.seed(0)
     th.manual_seed(0)
     
-    l = np.ones(1,) * 1.0
-    kernel = White(dim=1, c=10.) + RQK(dim=1, l=l, alpha=10., sigma=1.) +\
-        DotProduct(dim=1, c=0.1) * White(dim=1, c=0.1) + Constant(dim=1, c=20.)
+    l = np.ones([1, 2]) * 2.0
+    alpha = np.array([10., 10.])
+    sigma = np.array([10., 10.])
+    c = np.array([1., 1.])
+    kernel = White(c=c, dim_in=1, dim_out=2) + RQK(l=l, sigma=sigma, alpha=alpha, dim_in=1, dim_out=2) +\
+        White(c=c, dim_in=1, dim_out=2) * DotProduct(c=c, dim_in=1, dim_out=2) + Constant(c=c, dim_in=1, dim_out=2)
     gpr = ExactGPR(kernel=kernel)
     
     train_data_num = 250 # bug? when n=100
-    X = th.linspace(-5,5,100).reshape(-1,1).to(device).double()
-    Y = th.cos(X)
-    Xtrain = th.linspace(-5,5,train_data_num).reshape(-1,1).to(device).double()
-    Ytrain = th.cos(Xtrain) + Xtrain * th.randn(train_data_num,1).to(device).double() * 0.2 # add state dependent noise
+    X = np.linspace(-5,5,100).reshape(-1,1)
+    Y = np.concatenate([np.cos(X), np.sin(X)], axis=1)
+    Xtrain = np.linspace(-5,5,train_data_num).reshape(-1,1)
+    Ytrain1 = np.cos(Xtrain) + Xtrain*np.random.randn(train_data_num, 1) * 0.2 # add state dependent noise
+    Ytrain2 = np.sin(Xtrain) + np.random.randn(train_data_num, 1) * 0.2
+    Ytrain = np.concatenate([Ytrain1, Ytrain2], axis=1)
+    Xtrain, Ytrain, X, Y = th.from_numpy(Xtrain).to(device), th.from_numpy(Ytrain).to(device), th.from_numpy(X).to(device), th.from_numpy(Y).to(device)
     
-    gpr.fit(Xtrain, Ytrain, call_hyper_opt=True, lr=2e-3, epoch=6000)
-    print( list(gpr.kernel.parameters()) )
+    # train
+    gpr.fit(Xtrain, Ytrain, call_hyper_opt=True, lr=2e-3, epoch=1000)
+    # print( list(gpr.kernel.parameters()) )
     import time
     s = time.time()
-    for i in range(20):
+    for i in range(50):
         mean, var = gpr.predict(X, return_var=True)
     e = time.time()
     print("The time for each pred: %.5f" % ((e-s)/100))
     L = Loss(mean, th.cos(mean))
     print("Loss MSE: %.2f" %  L)
-    plt.figure(figsize=[10,7])
-    plt.plot(X.detach().cpu().numpy(), mean.detach().cpu().numpy(), label="mean")
-    plt.plot(X.detach().cpu().numpy(), mean.detach().cpu().numpy() + 3*var.detach().cpu().numpy(), '-.r', label="var")
-    plt.plot(X.detach().cpu().numpy(), mean.detach().cpu().numpy() - 3*var.detach().cpu().numpy(), '-.r')
-    plt.plot(X.detach().cpu().numpy(), Y.detach().cpu().numpy(), label="GroundTueth")
-    plt.plot(Xtrain.detach().cpu().numpy(), Ytrain.detach().cpu().numpy(), 'rx', label="data", alpha=0.5)
+    X = X.detach().cpu().numpy()
+    Y = Y.detach().cpu().numpy()
+    mean = mean.detach().cpu().numpy()
+    var = var.detach().cpu().numpy()
+    Xtrain, Ytrain = Xtrain.detach().cpu().numpy(), Ytrain.detach().cpu().numpy()
+    plt.figure(figsize=[6,8])
+    plt.subplot(211)
+    plt.plot(X, mean[:,0], label="mean")
+    plt.plot(X, mean[:,0] + 3*var[:,0], '-.r', label="var")
+    plt.plot(X, mean[:,0] - 3*var[:,0], '-.r')
+    plt.plot(X, Y[:,0], label="GroundTueth")
+    plt.plot(Xtrain, Ytrain[:,0], 'rx', label="data", alpha=0.4)
+    plt.grid()
+    plt.ylabel("Output 1")
+    
+    plt.subplot(212)
+    plt.plot(X, mean[:,1], label="mean")
+    plt.plot(X, mean[:,1] + 3*var[:,1], '-.r', label="var")
+    plt.plot(X, mean[:,1] - 3*var[:,1], '-.r')
+    plt.plot(X, Y[:,1], label="GroundTueth")
+    plt.plot(Xtrain, Ytrain[:,1], 'rx', label="data", alpha=0.4)
     plt.grid()
     plt.xlabel("Input")
-    plt.ylabel("Output")
+    plt.ylabel("Output 2")
     plt.legend()
     plt.tight_layout()
     plt.show()
