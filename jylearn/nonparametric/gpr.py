@@ -1,9 +1,6 @@
-from calendar import c
-from pickletools import optimize
-from subprocess import call
 from jylearn.parametric.regression import Regression
 import torch as th
-from torch.optim import Adam
+from torch.optim import LBFGS, RMSprop
 from tqdm import tqdm
 device = "cuda" if th.cuda.is_available() else "cpu"
 th.pi = th.acos(th.zeros(1)).item() * 2
@@ -17,7 +14,7 @@ class ExactGPR(Regression):
         '''
         self.kernel = kernel
 
-    def fit(self, X, Y, call_hyper_opt=False, **kwargs):
+    def fit(self, X, Y, call_hyper_opt=False, optimizer_type="LBFGS", **kwargs):
         '''
         '''
         if len(X.shape) == 1:
@@ -36,14 +33,41 @@ class ExactGPR(Regression):
             evidence = float("-inf")
             self.kernel.train()
             pbar = tqdm(range(epoch), desc =str(evidence))
-            for _ in pbar:
-                optimizer = Adam(params=self.kernel.parameters(), lr=lr)
-                optimizer.zero_grad()
-                evidence = ExactGPR.evidence(self.kernel, X, Y)
-                loss = - evidence
-                loss.backward()
-                optimizer.step()
-                pbar.set_description("{:.2f}".format(evidence.item()))
+            if optimizer_type == "LBFGS":
+                optimizer = LBFGS(params=self.kernel.parameters(), 
+                                    lr=lr, 
+                                    max_iter=20)
+                
+                self.curr_evidence = evidence
+                def closure():
+                    optimizer.zero_grad()
+                    evidence = ExactGPR.evidence(self.kernel, X, Y)
+                    self.curr_evidence = evidence.item()
+                    objective = -evidence
+                    objective.backward()
+                    return objective
+                
+                for _ in pbar:
+                    optimizer.step(closure)
+                    pbar.set_description("{:.2f}".format(self.curr_evidence))
+            elif optimizer_type == "RMSPROP":
+                optimizer = RMSprop(params=self.kernel.parameters(), lr=lr)
+                self.curr_evidence = evidence
+                batch_size = kwargs.get("batch_size", 256)
+                for _ in pbar:
+                    optimizer.zero_grad()
+                    batch_index = th.randperm(len(X))[:batch_size]
+                    evidence = ExactGPR.evidence(self.kernel, X[batch_index], Y[batch_index])
+                    self.curr_evidence = evidence.item()
+                    objective = -evidence
+                    objective.backward()
+                    optimizer.step()
+                    pbar.set_description("{:.2f}".format(self.curr_evidence))
+                    
+                    # this technique can be used in sgd methods
+                    for p in self.kernel.parameters():
+                        p.data.clamp_(0)
+                
             self.kernel.eval()
             self.kernel.stop_autograd()
         
@@ -52,7 +76,7 @@ class ExactGPR(Regression):
             u = th.cholesky(K) # u has shape (ny, n, n)
         except:
             print("The cho_factor meet singular matrix, now add damping...")
-            K += th.eye(K.shape[0]).unsqueeze(0).repeat(m, 1, 1).to(device) * 1e-8
+            K += th.eye(K.shape[1]).unsqueeze(0).repeat(m, 1, 1).to(device) * 1e-6
             u = th.cholesky(K) # u has shape (ny, n, n)
         
         Y = Y.permute(1, 0)
@@ -78,12 +102,12 @@ class ExactGPR(Regression):
         try:
             u = th.cholesky(K) # u has shape (ny, n, n)
         except:
-            print("The cho_factor meet singular matrix, now add damping...")
-            K += th.eye(K.shape[0]).unsqueeze(0).repeat(m, 1, 1).to(device) * 1e-8
+            K += th.eye(K.shape[1]).unsqueeze(0).repeat(m, 1, 1).to(device) * 1e-6
             u = th.cholesky(K) # u has shape (ny, n, n)
             
         Y = Y.permute(1, 0)
         Y = Y.unsqueeze(2)
+
         alpha = th.cholesky_solve(Y, u) # (ny, n, 1) solve ny linear system independently
         L = u # shape (ny, n, n)
         
@@ -127,26 +151,27 @@ if __name__ == "__main__":
     np.random.seed(0)
     th.manual_seed(0)
     
-    l = np.ones([1, 2]) * 2.0
-    alpha = np.array([10., 10.])
-    sigma = np.array([10., 10.])
-    c = np.array([1., 1.])
-    kernel = White(c=c, dim_in=1, dim_out=2) + RQK(l=l, sigma=sigma, alpha=alpha, dim_in=1, dim_out=2) +\
+    l = np.ones([1, 2]) * 0.5
+    sigma = np.array([1., 1.])
+    c = np.array([0.5, 0.5])
+    
+    kernel = White(c=c, dim_in=1, dim_out=2) + RBF(l=l, sigma=sigma, dim_in=1, dim_out=2) +\
         White(c=c, dim_in=1, dim_out=2) * DotProduct(c=c, dim_in=1, dim_out=2) + Constant(c=c, dim_in=1, dim_out=2)
     gpr = ExactGPR(kernel=kernel)
     
-    train_data_num = 250 # bug? when n=100
-    X = np.linspace(-5,5,100).reshape(-1,1)
+    train_data_num = 200 # bug? when n=100
+    X = np.linspace(-10,10,100).reshape(-1,1)
     Y = np.concatenate([np.cos(X), np.sin(X)], axis=1)
-    Xtrain = np.linspace(-5,5,train_data_num).reshape(-1,1)
-    Ytrain1 = np.cos(Xtrain) + Xtrain*np.random.randn(train_data_num, 1) * 0.2 # add state dependent noise
-    Ytrain2 = np.sin(Xtrain) + np.random.randn(train_data_num, 1) * 0.2
+    Xtrain = np.linspace(-10,10,train_data_num).reshape(-1,1)
+    Ytrain1 = np.cos(Xtrain) + np.random.randn(train_data_num, 1) * 0.3 # add state dependent noise
+    Ytrain2 = np.sin(Xtrain) + np.random.randn(train_data_num, 1) * 0.3
     Ytrain = np.concatenate([Ytrain1, Ytrain2], axis=1)
-    Xtrain, Ytrain, X, Y = th.from_numpy(Xtrain).to(device), th.from_numpy(Ytrain).to(device), th.from_numpy(X).to(device), th.from_numpy(Y).to(device)
+    Xtrain, Ytrain, X, Y = th.from_numpy(Xtrain).to(device), th.from_numpy(Ytrain).to(device),\
+        th.from_numpy(X).to(device), th.from_numpy(Y).to(device)
     
     # train
-    gpr.fit(Xtrain, Ytrain, call_hyper_opt=True, lr=2e-3, epoch=1000)
-    # print( list(gpr.kernel.parameters()) )
+    gpr.fit(Xtrain, Ytrain, call_hyper_opt=True, lr=6e-3, epoch=500, optimizer_type="RMSPROP")
+    print( list(gpr.kernel.parameters()) )
     import time
     s = time.time()
     for i in range(50):
@@ -163,8 +188,8 @@ if __name__ == "__main__":
     plt.figure(figsize=[6,8])
     plt.subplot(211)
     plt.plot(X, mean[:,0], label="mean")
-    plt.plot(X, mean[:,0] + 3*var[:,0], '-.r', label="var")
-    plt.plot(X, mean[:,0] - 3*var[:,0], '-.r')
+    plt.plot(X, mean[:,0] + 5*var[:,0], '-.r', label="var")
+    plt.plot(X, mean[:,0] - 5*var[:,0], '-.r')
     plt.plot(X, Y[:,0], label="GroundTueth")
     plt.plot(Xtrain, Ytrain[:,0], 'rx', label="data", alpha=0.4)
     plt.grid()
@@ -172,8 +197,8 @@ if __name__ == "__main__":
     
     plt.subplot(212)
     plt.plot(X, mean[:,1], label="mean")
-    plt.plot(X, mean[:,1] + 3*var[:,1], '-.r', label="var")
-    plt.plot(X, mean[:,1] - 3*var[:,1], '-.r')
+    plt.plot(X, mean[:,1] + 5*var[:,1], '-.r', label="var")
+    plt.plot(X, mean[:,1] - 5*var[:,1], '-.r')
     plt.plot(X, Y[:,1], label="GroundTueth")
     plt.plot(Xtrain, Ytrain[:,1], 'rx', label="data", alpha=0.4)
     plt.grid()

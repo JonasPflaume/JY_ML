@@ -354,8 +354,8 @@ class RBF(Kernel):
         sigma = theta[:self.output_dim].view(self.output_dim, 1, 1)
         l = theta[self.output_dim:].view(self.input_dim, self.output_dim)
         x, y = x.view(x.shape[0], x.shape[1], 1), y.view(y.shape[0], y.shape[1], 1)
-        x = (x/l).permute(2,0,1) # shape: (ny, N, nx)
-        y = (y/l).permute(2,0,1) # shape: (ny, M, nx), let's regard ny axis as batch
+        x = (x/l).permute(2,0,1).contiguous() # shape: (ny, N, nx)
+        y = (y/l).permute(2,0,1).contiguous() # shape: (ny, M, nx), let's regard ny axis as batch
         distance = th.cdist(x, y) # (ny, N, M)
         return sigma * th.exp( - distance ** 2 )
 
@@ -387,8 +387,8 @@ class Matern(Kernel):
         l = theta[self.output_dim+1:].view(self.input_dim, self.output_dim)
         
         x, y = x.view(x.shape[0], x.shape[1], 1), y.view(y.shape[0], y.shape[1], 1)
-        x = (x/l).permute(2,0,1) # shape: (ny, N, nx)
-        y = (y/l).permute(2,0,1) # shape: (ny, M, nx), let's regard ny axis as batch
+        x = (x/l).permute(2,0,1).contiguous() # shape: (ny, N, nx)
+        y = (y/l).permute(2,0,1).contiguous() # shape: (ny, M, nx), let's regard ny axis as batch
         dists = th.cdist(x, y) # (ny, N, M)
         if mu == 0.5:
             K = sigma * th.exp(-dists)
@@ -433,8 +433,8 @@ class RQK(Kernel):
         l = theta[2*self.output_dim:].view(self.input_dim, self.output_dim)
         
         x, y = x.view(x.shape[0], x.shape[1], 1), y.view(y.shape[0], y.shape[1], 1)
-        x = (x/l).permute(2,0,1) # shape: (ny, N, nx)
-        y = (y/l).permute(2,0,1) # shape: (ny, M, nx), let's regard ny axis as batch
+        x = (x/l).permute(2,0,1).contiguous() # shape: (ny, N, nx)
+        y = (y/l).permute(2,0,1).contiguous() # shape: (ny, M, nx), let's regard ny axis as batch
         distance = th.cdist(x, y) # (ny, N, M)
         return sigma * ( 1 + distance ** 2 / alpha ) ** (-alpha)
     
@@ -531,8 +531,9 @@ def rbf(param, x, y):
     sigma = param[:output_dim].view(output_dim, 1, 1)
     l = param[output_dim:].view(input_dim, output_dim)
     x, y = x.view(x.shape[0], x.shape[1], 1), y.view(y.shape[0], y.shape[1], 1)
-    x = (x/l).permute(2,0,1) # shape: (ny, N, nx)
-    y = (y/l).permute(2,0,1) # shape: (ny, M, nx), let's regard ny axis as batch
+    x = (x/l).permute(2,0,1).contiguous() # shape: (ny, N, nx)
+    y = (y/l).permute(2,0,1).contiguous() # shape: (ny, M, nx), let's regard ny axis as batch
+    
     distance = th.cdist(x, y) # (ny, N, M)
     return sigma * th.exp( - distance ** 2 )
 
@@ -563,8 +564,8 @@ def rqk(param, x, y):
     l = theta[2*output_dim:].view(input_dim, output_dim)
     
     x, y = x.view(x.shape[0], x.shape[1], 1), y.view(y.shape[0], y.shape[1], 1)
-    x = (x/l).permute(2,0,1) # shape: (ny, N, nx)
-    y = (y/l).permute(2,0,1) # shape: (ny, M, nx), let's regard ny axis as batch
+    x = (x/l).permute(2,0,1).contiguous() # shape: (ny, N, nx)
+    y = (y/l).permute(2,0,1).contiguous() # shape: (ny, M, nx), let's regard ny axis as batch
     distance = th.cdist(x, y) # (ny, N, M)
     return sigma * ( 1 + distance ** 2 / alpha ) ** (-alpha)
 
@@ -577,8 +578,8 @@ def matern(param, x, y):
     l = theta[output_dim+1:].view(input_dim, output_dim)
     
     x, y = x.view(x.shape[0], x.shape[1], 1), y.view(y.shape[0], y.shape[1], 1)
-    x = (x/l).permute(2,0,1) # shape: (ny, N, nx)
-    y = (y/l).permute(2,0,1) # shape: (ny, M, nx), let's regard ny axis as batch
+    x = (x/l).permute(2,0,1).contiguous() # shape: (ny, N, nx)
+    y = (y/l).permute(2,0,1).contiguous() # shape: (ny, M, nx), let's regard ny axis as batch
     dists = th.cdist(x, y) # (ny, N, M)
     if mu == 0.5:
         K = sigma * th.exp(-dists)
