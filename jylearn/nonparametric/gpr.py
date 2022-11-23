@@ -1,6 +1,6 @@
 from jylearn.parametric.regression import Regression
 import torch as th
-from torch.optim import LBFGS, RMSprop
+from torch.optim import LBFGS, Adam
 from tqdm import tqdm
 device = "cuda" if th.cuda.is_available() else "cpu"
 th.pi = th.acos(th.zeros(1)).item() * 2
@@ -36,7 +36,7 @@ class ExactGPR(Regression):
             if optimizer_type == "LBFGS":
                 optimizer = LBFGS(params=self.kernel.parameters(), 
                                     lr=lr, 
-                                    max_iter=20)
+                                    max_iter=10)
                 
                 self.curr_evidence = evidence
                 def closure():
@@ -50,8 +50,8 @@ class ExactGPR(Regression):
                 for _ in pbar:
                     optimizer.step(closure)
                     pbar.set_description("{:.2f}".format(self.curr_evidence))
-            elif optimizer_type == "RMSPROP":
-                optimizer = RMSprop(params=self.kernel.parameters(), lr=lr)
+            elif optimizer_type == "Adam":
+                optimizer = Adam(params=self.kernel.parameters(), lr=lr)
                 self.curr_evidence = evidence
                 batch_size = kwargs.get("batch_size", 256)
                 for _ in pbar:
@@ -116,6 +116,8 @@ class ExactGPR(Regression):
         diagonal_term = th.log(th.diagonal(L, dim1=1, dim2=2)).sum(dim=1)
         evidence = - 0.5 * th.einsum("ijk,ijk->i", Y, alpha) - diagonal_term - n / 2 * th.log(2*th.tensor([th.pi]).to(device))
         evidence = evidence.sum(axis=-1)
+        del K, u, alpha, L, diagonal_term
+        th.cuda.empty_cache()
         return evidence
     
     def predict(self, x, return_var=False):
@@ -131,8 +133,8 @@ class ExactGPR(Regression):
             k = k.permute(0,2,1)
             v = th.triangular_solve(k, self.L, upper=False)[0] # (ny, n, n_*)
             v = v.permute(2, 0, 1) # (n_*, ny, n)
-            prior_std = self.kernel.diag(x) # the diag in kernel base class changed. (n_*, ny)
-            var = prior_std - th.einsum("ijk,ijk->ij", v, v)
+            prior_std = self.kernel(x,x,diag=True) # the diag in kernel base class changed. (ny, n_*)
+            var = prior_std.T - th.einsum("ijk,ijk->ij", v, v)
             del k, v, prior_std
             th.cuda.empty_cache()
             return mean, var.reshape(-1,self.kernel.output_dim)
@@ -153,13 +155,13 @@ if __name__ == "__main__":
     
     l = np.ones([1, 2]) * 0.5
     sigma = np.array([1., 1.])
-    c = np.array([0.5, 0.5])
+    c = np.array([0.1, 0.1])
     
-    kernel = White(c=c, dim_in=1, dim_out=2) + RBF(l=l, sigma=sigma, dim_in=1, dim_out=2) +\
-        White(c=c, dim_in=1, dim_out=2) * DotProduct(c=c, dim_in=1, dim_out=2) + Constant(c=c, dim_in=1, dim_out=2)
+    kernel = White(c=c, dim_in=1, dim_out=2) + DotProduct(c=c, sigma=sigma, dim_in=1, dim_out=2) ** 2. + RBF(sigma=sigma, l=l, dim_in=1, dim_out=2) +\
+        White(c=c, dim_in=1, dim_out=2) * DotProduct(c=c, sigma=sigma, dim_in=1, dim_out=2) + Constant(c=c, dim_in=1, dim_out=2)
     gpr = ExactGPR(kernel=kernel)
     
-    train_data_num = 200 # bug? when n=100
+    train_data_num = 50 # bug? when n=100
     X = np.linspace(-10,10,100).reshape(-1,1)
     Y = np.concatenate([np.cos(X), np.sin(X)], axis=1)
     Xtrain = np.linspace(-10,10,train_data_num).reshape(-1,1)
@@ -170,7 +172,7 @@ if __name__ == "__main__":
         th.from_numpy(X).to(device), th.from_numpy(Y).to(device)
     
     # train
-    gpr.fit(Xtrain, Ytrain, call_hyper_opt=True, lr=6e-3, epoch=500, optimizer_type="RMSPROP")
+    gpr.fit(Xtrain, Ytrain, call_hyper_opt=True, lr=1e-3, epoch=2000, optimizer_type="Adam", batch_size=60)
     print( list(gpr.kernel.parameters()) )
     import time
     s = time.time()
