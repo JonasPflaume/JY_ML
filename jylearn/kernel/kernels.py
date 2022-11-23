@@ -263,7 +263,8 @@ class Sum(Kernel, CompoundKernel):
         self.operation_dict = self.get_operation_dict()
         
     def forward(self, x, y, diag=False):
-        assert x.shape[1] == self.input_dim, "wrong dimension."
+        nx = x.shape[1] if len(x.shape)==2 else x.shape[2]
+        assert nx == self.input_dim, "wrong dimension."
         operation_res = self.evaluate_operation_dict(self.operation_dict, x, y, diag)
         return next(reversed(operation_res.values()))
 
@@ -291,7 +292,8 @@ class Product(Kernel, CompoundKernel):
         self.operation_dict = self.get_operation_dict()
         
     def forward(self, x, y, diag=False):
-        assert x.shape[1] == self.input_dim, "wrong dimension."
+        nx = x.shape[1] if len(x.shape)==2 else x.shape[2]
+        assert nx == self.input_dim, "wrong dimension."
         operation_res = self.evaluate_operation_dict(self.operation_dict, x, y, diag)
         return next(reversed(operation_res.values()))
     
@@ -321,7 +323,8 @@ class Exponentiation(Kernel, CompoundKernel):
         self.operation_dict = self.get_operation_dict()
         
     def forward(self, x, y, diag=False):
-        assert x.shape[1] == self.input_dim, "wrong dimension."
+        nx = x.shape[1] if len(x.shape)==2 else x.shape[2]
+        assert nx == self.input_dim, "wrong dimension."
         operation_res = self.evaluate_operation_dict(self.operation_dict, x, y, diag)
         return next(reversed(operation_res.values()))
 
@@ -399,7 +402,7 @@ class Matern(Kernel):
         self.output_dim = dim_out
         Matern.counter += 1
     
-    def forward(self, x, y, diag):
+    def forward(self, x, y, diag=False):
         ''' x - (n, nx), y - (h, nx) -> (ny, n, h)
             if x or y has three axis
             such as inducing variables:
@@ -640,14 +643,15 @@ class White(Kernel):
 # This means that each kernel class will have a functional implemented below.
 
 def rbf(param, x, y, diag):
-    input_dim = x.shape[1]
+    len_x = x.shape[0] if len(x.shape)==2 else x.shape[1]
+    x_dim = x.shape[1] if len(x.shape)==2 else x.shape[2]
+    input_dim = x_dim
     output_dim = int( len(param) / (input_dim + 1) )
 
     theta = param
     sigma = theta[:output_dim].view(output_dim, 1, 1)
     l = theta[output_dim:].view(input_dim, output_dim).unsqueeze(0) # (1,nx, ny)
     
-    len_x = x.shape[0] if len(x.shape)==2 else x.shape[1]
     if diag:
         assert x.shape == y.shape, "they must be the same input data!"
         distance = th.zeros(output_dim, len_x).to(device).double()
@@ -709,15 +713,16 @@ def exponent(param, x, y, diag):
     return param * 1.
 
 def rqk(param, x, y, diag):
-    input_dim = x.shape[1]
+    x_len = x.shape[0] if len(x.shape)==2 else x.shape[1]
+    x_dim = x.shape[1] if len(x.shape)==2 else x.shape[2]
+    input_dim = x_dim
     output_dim = int( len(param) / (input_dim + 2) )
 
     theta = param
     sigma = theta[:output_dim].view(output_dim, 1, 1)
     alpha = theta[output_dim:2*output_dim].view(output_dim, 1, 1)
-    l = theta[2*output_dim:].view(input_dim, output_dim).unsqueeze(0)
+    l = theta[2*output_dim:].view(input_dim, output_dim).unsqueeze(0) # (1,nx,ny)
     
-    len_x = x.shape[0] if len(x.shape)==2 else x.shape[1]
     if len(x.shape)==3: # say (ny, m, nx)
         x = x.permute(1, 2, 0) # (m, nx, ny)
     else:
@@ -728,7 +733,7 @@ def rqk(param, x, y, diag):
         y = y.view(y.shape[0], y.shape[1], 1) # (m, nx, 1)
     if diag:
         assert x.shape == y.shape, "they must be the same input data!"
-        distance = th.zeros(output_dim, len_x).to(device).double()
+        distance = th.zeros(output_dim, x_len).to(device).double()
         return (sigma.squeeze(2) * ( 1 + distance ** 2 / alpha.squeeze(2) ) ** (-alpha.squeeze(2))).squeeze()
     else:
         x = (x/l).permute(2,0,1).contiguous() # shape: (ny, N, nx)
@@ -737,14 +742,15 @@ def rqk(param, x, y, diag):
         return sigma * ( 1 + distance ** 2 / alpha ) ** (-alpha)
 
 def matern(param, x, y, diag):
-    input_dim = x.shape[1]
+    len_x = x.shape[0] if len(x.shape)==2 else x.shape[1]
+    x_dim = x.shape[1] if len(x.shape)==2 else x.shape[2]
+    input_dim = x_dim
     output_dim = int( (len(param)-1) / (input_dim + 1) )
     theta = param
     sigma = theta[:output_dim].view(output_dim, 1, 1)
     mu = theta[output_dim:output_dim+1]
     l = theta[output_dim+1:].view(input_dim, output_dim).unsqueeze(0)
     
-    len_x = x.shape[0] if len(x.shape)==2 else x.shape[1]
     if len(x.shape)==3: # say (ny, m, nx)
         x = x.permute(1, 2, 0) # (m, nx, ny)
     else:

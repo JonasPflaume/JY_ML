@@ -151,7 +151,6 @@ class VariationalEMSparseGPR(Regression):
             objective = -elbo_ny.sum()
             objective.backward()
             optimizer.step()
-            
             elbo_epi += objective.item()
             # this technique can be used in sgd methods
             for p in self.kernel.parameters():
@@ -174,16 +173,19 @@ class VariationalEMSparseGPR(Regression):
         '''
         n, m = X.shape[0], Xm.shape[1]
         output_noise = dict(white_kernel.named_parameters())[white_kernel.white_name].view(-1,1,1) # (ny,1,1)
+
         F0 = - n/2 * th.log(2*th.pi) - (n-m)/2 * th.log(output_noise.squeeze()) - 1/(2*output_noise.squeeze()) * th.einsum("ij,ij->j", Y, Y)
-        
+
         Kmm = kernel(Xm, Xm) + th.eye(m,m).to(device).double() * 1e-6 # (ny, m, m)
         F1 = 0.5 * th.log( th.diagonal(Kmm, dim1=1, dim2=2) ).sum(dim=1)
-        Kmn, Knm = kernel(Xm, X), kernel(X, Xm)
+
+        Kmn= kernel(Xm, X)
+        Knm = Kmn.permute(0,2,1)
         Kmn_Knm = th.bmm(Kmn, Knm) # (ny,m,m)
         Term1 = output_noise * Kmm + Kmn_Knm + th.eye(m,m).to(device).double() * 1e-6
         
         F2 = -0.5 * th.log( th.diagonal(Term1, dim1=1, dim2=2) ).sum(dim=1)
-        
+
         # there is any problem with F3 term
         u = th.cholesky(Term1) # (ny,m,m)
         b = th.einsum("ijk,ki->ij", Kmn, Y) # (ny,m)
@@ -191,14 +193,14 @@ class VariationalEMSparseGPR(Regression):
 
         leading_term = th.einsum("ij,jik->jk", Y, Knm) # (ny,m)
         F3 = 1/(2*output_noise.squeeze()) * th.einsum("ij,ij->i", leading_term, inv_Term1)
-        
+
         diag_terms = kernel(X, X, diag=True)
         F4 = - 1/(2*output_noise.squeeze()) * th.sum(diag_terms, dim=1)
-
+        
         u = th.cholesky(Kmm) # (ny,m,m)
         inside_trace = th.cholesky_solve(Kmn_Knm, u) # (ny,m,m)
         F5 = 1/(2*output_noise.squeeze()) * inside_trace.diagonal(offset=0, dim1=-1, dim2=-2).sum(-1)
-        
+
         Fv = F0 + F1 + F2 + F3 + F4 + F5
         return Fv
 
@@ -247,12 +249,12 @@ if __name__ == "__main__":
     np.random.seed(0)
     th.manual_seed(0)
     
-    l = np.ones([1, 2]) * 0.2
+    l = np.ones([1, 2]) * 1.
     sigma = np.array([1., 1.])
-    c = np.array([0.1, 0.1])
+    c = np.array([0.3, 0.3])
     
     white_kernel = White(c=c, dim_in=1, dim_out=2)
-    kernel = RBF(l=l, sigma=sigma, dim_in=1, dim_out=2)
+    kernel = RQK(l=l, sigma=sigma, alpha=sigma, dim_in=1, dim_out=2)
     
     gpr = VariationalEMSparseGPR(kernel=kernel, white_kernle=white_kernel)
     
@@ -267,8 +269,7 @@ if __name__ == "__main__":
         th.from_numpy(X).to(device), th.from_numpy(Y).to(device)
     
     # train
-    ind = gpr.fit(Xtrain, Ytrain, m=10, subsetNum=100, no_max_step=False)
-    
+    ind = gpr.fit(Xtrain, Ytrain, m=8, subsetNum=400, no_max_step=False, lr=1e-2, episode=60)
     
     import time
     s = time.time()
@@ -276,8 +277,6 @@ if __name__ == "__main__":
         mean, var = gpr.predict(X, return_var=True)
     e = time.time()
     print("The time for each pred: %.5f" % ((e-s)/100))
-    L = Loss(mean, th.cos(mean))
-    print("Loss MSE: %.2f" %  L)
     X = X.detach().cpu().numpy()
     Y = Y.detach().cpu().numpy()
     mean = mean.detach().cpu().numpy()
