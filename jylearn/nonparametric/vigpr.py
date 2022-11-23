@@ -85,7 +85,7 @@ class VariationalEMSparseGPR(Regression):
             Xm.append(Xm_y)
         Xm = th.cat(Xm, dim=0) # (ny, m, nx)
         Kmn = self.kernel(Xm, X) # (ny, m, n)
-        Knm = self.kernel(X, Xm) # (ny, n, m)
+        Knm = Kmn.permute(0,2,1) # (ny, n, m)
         Kmm = self.kernel(Xm, Xm) + th.eye(m,m).to(device).double() * 1e-6 # (ny, m, m)
         
         Sigma = Kmm + 1/self.sigma * th.bmm(Kmn, Knm)
@@ -111,7 +111,7 @@ class VariationalEMSparseGPR(Regression):
             equation (8) to generate the predictive distribution
         '''
         Kxm = self.kernel(x, self.Xm) # (ny, *, m)
-        Kmx = self.kernel(self.Xm, x) # (ny, m, *)
+        Kmx = Kxm.permute(0,2,1) # (ny, m, *)
         
         mean = th.einsum("ijk,ik->ij", Kxm, self.Kmm_inv_mu) # (ny,m)
         
@@ -254,7 +254,7 @@ if __name__ == "__main__":
     c = np.array([0.3, 0.3])
     
     white_kernel = White(c=c, dim_in=1, dim_out=2)
-    kernel = RQK(l=l, sigma=sigma, alpha=sigma, dim_in=1, dim_out=2)
+    kernel = RBF(l=l, sigma=sigma, dim_in=1, dim_out=2)
     
     gpr = VariationalEMSparseGPR(kernel=kernel, white_kernle=white_kernel)
     
@@ -269,7 +269,7 @@ if __name__ == "__main__":
         th.from_numpy(X).to(device), th.from_numpy(Y).to(device)
     
     # train
-    ind = gpr.fit(Xtrain, Ytrain, m=8, subsetNum=400, no_max_step=False, lr=1e-2, episode=60)
+    ind = gpr.fit(Xtrain, Ytrain, m=20, subsetNum=400, no_max_step=False, lr=1e-2, episode=60)
     
     import time
     s = time.time()

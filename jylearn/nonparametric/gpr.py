@@ -161,7 +161,7 @@ if __name__ == "__main__":
         White(c=c, dim_in=1, dim_out=2) * DotProduct(c=c, sigma=sigma, dim_in=1, dim_out=2) + Constant(c=c, dim_in=1, dim_out=2)
     gpr = ExactGPR(kernel=kernel)
     
-    train_data_num = 50 # bug? when n=100
+    train_data_num = 1000 # bug? when n=100
     X = np.linspace(-10,10,100).reshape(-1,1)
     Y = np.concatenate([np.cos(X), np.sin(X)], axis=1)
     Xtrain = np.linspace(-10,10,train_data_num).reshape(-1,1)

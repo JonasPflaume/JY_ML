@@ -188,12 +188,384 @@ class Kernel(nn.Module):
     
     def __repr__(self):
         return str(self._parameters)
+    
+class RBF(Kernel):
+    ''' RBF kernel
+    '''
+    counter = 0
+    
+    def __init__(self, sigma:np.ndarray, l:np.ndarray, dim_in:int, dim_out:int):
+        ''' dim_in:     the dimension of input x
+            dim_out:    the dimension of output y
+            l:          the kernel length should be in (dim_in, dim_out) shape
+        '''
+        super().__init__()
+        param = np.concatenate([sigma, l.flatten()])
+        param_t = th.from_numpy(param).to(device)
+        self.rbf_name = "rbf{}".format(RBF.counter)
+        rbf_param = nn.parameter.Parameter(param_t)
+        curr_parameters = Parameters(self.rbf_name, rbf_param)
+
+        self.set_parameters(curr_parameters)
+        assert (dim_in, dim_out) == l.shape, "wrong dimension."
+        assert dim_out == len(sigma), "wrong dimension."
+        self.input_dim = dim_in
+        self.output_dim = dim_out
+        RBF.counter += 1
+    
+    @staticmethod
+    def rbf(param, x, y, diag):
+        len_x = x.shape[0] if len(x.shape)==2 else x.shape[1]
+        x_dim = x.shape[1] if len(x.shape)==2 else x.shape[2]
+        input_dim = x_dim
+        output_dim = int( len(param) / (input_dim + 1) )
+
+        theta = param
+        sigma = theta[:output_dim].view(output_dim, 1, 1)
+        l = theta[output_dim:].view(input_dim, output_dim).unsqueeze(0) # (1,nx, ny)
+        
+        if diag:
+            assert x.shape == y.shape, "they must be the same input data!"
+            distance = th.zeros(output_dim, len_x).to(device).double()
+            return (sigma.squeeze(2) * th.exp( - distance ** 2 )).squeeze()
+        else:
+            if len(x.shape)==3: # say (ny, m, nx)
+                x = x.permute(1, 2, 0) # (m, nx, ny)
+            else:
+                x = x.view(x.shape[0], x.shape[1], 1) # (m, nx, 1)
+            if len(y.shape)==3:
+                y = y.permute(1, 2, 0) # (m, nx, ny)
+            else:
+                y = y.view(y.shape[0], y.shape[1], 1) # (m, nx, 1)
+                
+            x = (x/l).permute(2,0,1).contiguous() # shape: (ny, N, nx)
+            y = (y/l).permute(2,0,1).contiguous() # shape: (ny, M, nx), let's regard ny axis as batch
+            distance = th.cdist(x, y) # (ny, N, M)
+            return sigma * th.exp( - distance ** 2 )
+    
+    def forward(self, x, y, diag=False):
+        ''' x - (n, nx), y - (h, nx) -> (ny, n, h)
+            if x or y has three axis
+            such as inducing variables:
+            x - (ny, m, nx), y - (h, nx) -> (ny, m, h)
+        '''
+        theta = eval("self.{}".format(self.rbf_name))
+        return RBF.rbf(theta, x, y, diag)
+
+class Matern(Kernel):
+    ''' Matern kernel
+    '''
+    counter = 0
+    
+    def __init__(self, sigma:np.ndarray, mu:float, l:np.ndarray, dim_in:int, dim_out:int):
+        super().__init__()
+        param = np.concatenate([sigma, np.array([mu]), l.flatten()])
+        param_t = th.from_numpy(param).to(device)
+        self.matern_name = "matern{}".format(Matern.counter)
+        matern_param = nn.parameter.Parameter(param_t)
+        curr_parameters = Parameters(self.matern_name, matern_param)
+
+        self.set_parameters(curr_parameters)
+        assert (dim_in, dim_out) == l.shape, "wrong dimension."
+        assert dim_out == len(sigma), "wrong dimension."
+        self.input_dim = dim_in
+        self.output_dim = dim_out
+        Matern.counter += 1
+    
+    @staticmethod
+    def matern(param, x, y, diag):
+        len_x = x.shape[0] if len(x.shape)==2 else x.shape[1]
+        x_dim = x.shape[1] if len(x.shape)==2 else x.shape[2]
+        input_dim = x_dim
+        output_dim = int( (len(param)-1) / (input_dim + 1) )
+        theta = param
+        sigma = theta[:output_dim].view(output_dim, 1, 1)
+        mu = theta[output_dim:output_dim+1]
+        l = theta[output_dim+1:].view(input_dim, output_dim).unsqueeze(0)
+        
+        if len(x.shape)==3: # say (ny, m, nx)
+            x = x.permute(1, 2, 0) # (m, nx, ny)
+        else:
+            x = x.view(x.shape[0], x.shape[1], 1) # (m, nx, 1)
+        if len(y.shape)==3:
+            y = y.permute(1, 2, 0) # (m, nx, ny)
+        else:
+            y = y.view(y.shape[0], y.shape[1], 1) # (m, nx, 1)
+        
+        if diag:
+            pass
+        else:
+            x = (x/l).permute(2,0,1).contiguous() # shape: (ny, N, nx)
+            y = (y/l).permute(2,0,1).contiguous() # shape: (ny, M, nx), let's regard ny axis as batch
+            dists = th.cdist(x, y) # (ny, N, M)
+        if mu == 0.5:
+            if diag:
+                assert x.shape == y.shape, "they must be the same input data!"
+                distance = th.zeros(output_dim, len_x).to(device).double()
+                return (sigma.squeeze(2) * th.exp( - distance)).squeeze()
+            else:
+                K = sigma * th.exp(-dists)
+        elif mu == 1.5:
+            if diag:
+                assert x.shape == y.shape, "they must be the same input data!"
+                distance = th.zeros(output_dim, len_x).to(device).double()
+                return (sigma.squeeze(2) * (1.0 + distance) * th.exp(-distance)).squeeze()
+            else:
+                K = dists * th.sqrt(th.tensor([3.]).to(device))
+                K = sigma * (1.0 + K) * th.exp(-K)
+        elif mu == 2.5:
+            if diag:
+                assert x.shape == y.shape, "they must be the same input data!"
+                distance = th.zeros(output_dim, len_x).to(device).double()
+                return (sigma.squeeze(2) * (1.0 + distance + distance**2 / 3.0) * th.exp(-distance)).squeeze()
+            else:
+                K = dists * th.sqrt(th.tensor([5.]).to(device))
+                K = sigma * (1.0 + K + K**2 / 3.0) * th.exp(-K)
+        elif th.isinf(mu):
+            if diag:
+                assert x.shape == y.shape, "they must be the same input data!"
+                distance = th.zeros(output_dim, len_x).to(device).double()
+                return (sigma.squeeze(2) * th.exp(-(distance**2) / 2.0)).squeeze()
+            else:
+                K = sigma * th.exp(-(dists**2) / 2.0)
+        else:
+            raise NotImplementedError("General cases are expensive to evaluate, please use mu = 0.5, 1.5, 2.5 and Inf")
+        return K
+    
+    def forward(self, x, y, diag=False):
+        ''' x - (n, nx), y - (h, nx) -> (ny, n, h)
+            if x or y has three axis
+            such as inducing variables:
+            x - (ny, m, nx), y - (h, nx) -> (ny, m, h)
+        '''
+        theta = eval("self.{}".format(self.matern_name))
+        return Matern.matern(theta, x, y, diag)
+
+class RQK(Kernel):
+    ''' rational quadratic kernel
+    '''
+    counter = 0
+    
+    def __init__(self, sigma:np.ndarray, alpha:np.ndarray, l:np.ndarray, dim_in:int, dim_out:int):
+        super().__init__()
+        param = np.concatenate([sigma, alpha, l.flatten()])
+        param_t = th.from_numpy(param).to(device)
+        self.rqk_name = "rqk{}".format(RBF.counter)
+        rqk_param = nn.parameter.Parameter(param_t)
+        curr_parameters = Parameters(self.rqk_name, rqk_param)
+
+        self.set_parameters(curr_parameters)
+        assert (dim_in, dim_out) == l.shape, "wrong dimension."
+        assert dim_out == len(sigma), "wrong dimension."
+
+        self.input_dim = dim_in
+        self.output_dim = dim_out
+        RQK.counter += 1
+    
+    @staticmethod
+    def rqk(param, x, y, diag):
+        x_len = x.shape[0] if len(x.shape)==2 else x.shape[1]
+        x_dim = x.shape[1] if len(x.shape)==2 else x.shape[2]
+        input_dim = x_dim
+        output_dim = int( len(param) / (input_dim + 2) )
+
+        theta = param
+        sigma = theta[:output_dim].view(output_dim, 1, 1)
+        alpha = theta[output_dim:2*output_dim].view(output_dim, 1, 1)
+        l = theta[2*output_dim:].view(input_dim, output_dim).unsqueeze(0) # (1,nx,ny)
+        
+        if len(x.shape)==3: # say (ny, m, nx)
+            x = x.permute(1, 2, 0) # (m, nx, ny)
+        else:
+            x = x.view(x.shape[0], x.shape[1], 1) # (m, nx, 1)
+        if len(y.shape)==3:
+            y = y.permute(1, 2, 0) # (m, nx, ny)
+        else:
+            y = y.view(y.shape[0], y.shape[1], 1) # (m, nx, 1)
+        if diag:
+            assert x.shape == y.shape, "they must be the same input data!"
+            distance = th.zeros(output_dim, x_len).to(device).double()
+            return (sigma.squeeze(2) * ( 1 + distance ** 2 / alpha.squeeze(2) ) ** (-alpha.squeeze(2))).squeeze()
+        else:
+            x = (x/l).permute(2,0,1).contiguous() # shape: (ny, N, nx)
+            y = (y/l).permute(2,0,1).contiguous() # shape: (ny, M, nx), let's regard ny axis as batch
+            distance = th.cdist(x, y) # (ny, N, M)
+            return sigma * ( 1 + distance ** 2 / alpha ) ** (-alpha)
+    
+    def forward(self, x, y, diag=False):
+        ''' x - (n, nx), y - (h, nx) -> (ny, n, h)
+            if x or y has three axis
+            such as inducing variables:
+            x - (ny, m, nx), y - (h, nx) -> (ny, m, h)
+        '''
+        theta = eval("self.{}".format(self.rqk_name))
+        return RQK.rqk(theta, x, y, diag)
+    
+class Constant(Kernel):
+    ''' constant kernel
+    '''
+    counter = 0
+    
+    def __init__(self, c:np.ndarray, dim_in:int, dim_out:int):
+        super().__init__()
+        assert dim_out == len(c), "wrong dimension."
+        t = th.from_numpy(c).to(device)
+        self.cons_name = "cons{}".format(Constant.counter)
+        cons_c = nn.parameter.Parameter(t)
+        curr_parameters = Parameters(self.cons_name, cons_c)
+
+        self.input_dim = dim_in
+        self.output_dim = dim_out
+        self.set_parameters(curr_parameters)
+        
+        Constant.counter += 1
+    
+    @staticmethod
+    def cons(param, x, y, diag):
+        output_dim = len(param)
+        c = param
+        c = c.view(output_dim, 1, 1)
+        x_len = x.shape[0] if len(x.shape)==2 else x.shape[1]
+        y_len = y.shape[0] if len(y.shape)==2 else y.shape[1]
+        if diag:
+            assert x.shape == y.shape, "they must be the same input data!"
+            return c.squeeze(2) * th.zeros(output_dim, x_len).to(device).double()
+        else:
+            return c * th.ones(output_dim, x_len, y_len).to(device)
+    
+    def forward(self, x, y, diag=False):
+        ''' x - (n, nx), y - (h, nx) -> (ny, n, h)
+            if x or y has three axis
+            such as inducing variables:
+            x - (ny, m, nx), y - (h, nx) -> (ny, m, h)
+        '''
+        c = eval("self.{}".format(self.cons_name))
+        return Constant.cons(c, x, y, diag)
+
+class DotProduct(Kernel):
+    ''' dot product kernel: theta * x.T @ y
+        l - vector parameter is regarded as diagonal weighting matrix L
+    '''
+    counter = 0
+    
+    def __init__(self, sigma:np.ndarray, c:np.ndarray, dim_in:int, dim_out:int):
+        super().__init__()
+        assert dim_out == len(c), "wrong dimension."
+        l = np.concatenate([c, sigma])
+        t = th.from_numpy(l).to(device)
+        self.dot_name = "dot{}".format(DotProduct.counter)
+        dot_l = nn.parameter.Parameter(t)
+        curr_parameters = Parameters(self.dot_name, dot_l)
+        
+        self.input_dim = dim_in
+        self.output_dim = dim_out
+        self.set_parameters(curr_parameters)
+        Constant.counter += 1
+    
+    @staticmethod
+    def dot(param, x, y, diag):
+        l = param
+        output_dim = len(param) // 2
+        c, sigma = l[:output_dim], l[output_dim:]
+        c = c.view(output_dim, 1, 1)
+        sigma = sigma.view(output_dim, 1, 1)
+        if diag:
+            assert x.shape==y.shape, "They should be same data."
+            if len(x.shape) == 3: # (ny,m,nx) (ny,h,nx) -> (ny,n,h)
+                dot_res = th.einsum("ijk,ijk->ij", x, y)
+            elif len(x.shape) == 2:
+                dot_res = th.einsum("ij,ij->i", x, y)
+                dot_res = dot_res.unsqueeze(0).repeat(output_dim, 1)
+            return sigma.squeeze(2) * (dot_res + c.squeeze(2))
+        else:
+            if len(x.shape) == 3 and len(y.shape) == 2: # (ny,m,nx) (h,nx) -> (ny,m,h)
+                dot_res = th.einsum("ijk,mk->ijm", x, y)
+            elif len(x.shape) == 2 and len(y.shape) == 3: # (n,nx) (ny,h,nx) -> (ny,n,h)
+                dot_res = th.einsum("ik,pmk->pim", x, y)
+            elif len(x.shape) == 3 and len(y.shape) == 3: # (ny,m,nx) (ny,h,nx) -> (ny,n,h)
+                dot_res = th.einsum("ijk,iqk->ijq", x, y)
+            else:
+                dot_res = th.einsum("ij,kj->ik", x, y)
+                dot_res = dot_res.unsqueeze(0).repeat(output_dim, 1, 1)
+            return sigma * (dot_res + c)
+
+    def forward(self, x, y, diag=False):
+        ''' x - (n, nx), y - (h, nx) -> (ny, n, h)
+            if x or y has three axis
+            such as inducing variables:
+            x - (ny, m, nx), y - (h, nx) -> (ny, m, h)
+        '''
+        l = eval("self.{}".format(self.dot_name))
+        return DotProduct.dot(l, x, y, diag)
+    
+class White(Kernel):
+    ''' white noise kernel
+    '''
+    counter = 0
+    
+    def __init__(self, c:np.ndarray, dim_in:int, dim_out:int):
+        super().__init__()
+        assert dim_out == len(c), "wrong dimension."
+        t = c
+        t = th.from_numpy(t).to(device)
+        self.white_name = "white{}".format(White.counter)
+        white_c = nn.parameter.Parameter(t)
+        curr_parameters = Parameters(self.white_name, white_c)
+        
+        self.input_dim = dim_in
+        self.output_dim = dim_out
+        self.set_parameters(curr_parameters)
+        White.counter += 1
+        
+    @staticmethod
+    def white(param, x, y, diag):
+        output_dim = len(param)
+        c = param
+        c = c.view(output_dim, 1, 1)
+
+        x_len = x.shape[0] if len(x.shape)==2 else x.shape[1]
+        y_len = y.shape[0] if len(y.shape)==2 else y.shape[1]
+        if diag:
+            assert x.shape == y.shape, "They should be same data."
+            K = c.squeeze(2) * th.ones(output_dim, x_len).double().to(device)
+        else:
+            if x.shape==y.shape and th.all(x == y):
+                K = c * th.eye(x_len).double().to(device).unsqueeze(0).repeat(output_dim, 1, 1)
+            else:
+                K = th.zeros((output_dim, x_len, y_len)).double().to(device)
+        return K
+    
+    def forward(self, x, y, diag=False):
+        ''' x - (n, nx), y - (h, nx) -> (ny, n, h)
+            if x or y has three axis
+            such as inducing variables:
+            x - (ny, m, nx), y - (h, nx) -> (ny, m, h)
+        '''
+        c = eval("self.{}".format(self.white_name))
+        return White.white(c, x, y, diag)
+
+# there is no kernel class for exponent operation, therefore just leave it as a function
+def exponent(param, x, y, diag):
+    return param * 1.
 
 class CompoundKernel(ABC):
     ''' The base class for a compound kernel
         which contains the necessary methods to 
         reconstruct the compound kernel from individual kernels.
     '''
+    
+    # adding new kernel needs to update this dict
+    # map an operation to a static function string
+    _kernel_function_dict = {
+            "rbf":      "RBF.rbf",
+            "cons":     "Constant.cons",
+            "rqk":      "RQK.rqk",
+            "white":   "White.white",
+            "matern":   "Matern.matern",
+            "dot":      "DotProduct.dot",
+            "exponent": "exponent"
+    }
+    
     def generate_func_dict(self):
         ''' generate the necessary kernel functionals
         '''
@@ -203,6 +575,7 @@ class CompoundKernel(ABC):
         func_chain_dict = OrderedDict()
         for name, param in tensor_dict.items():
             command = "".join([i for i in name if not i.isdigit()])
+            command = CompoundKernel._kernel_function_dict.get(command)
             command = "partial({}, param)".format(command)
             func = eval(command)
             func_chain_dict[name] = func
@@ -327,492 +700,3 @@ class Exponentiation(Kernel, CompoundKernel):
         assert nx == self.input_dim, "wrong dimension."
         operation_res = self.evaluate_operation_dict(self.operation_dict, x, y, diag)
         return next(reversed(operation_res.values()))
-
-class RBF(Kernel):
-    ''' RBF kernel
-    '''
-    counter = 0
-    
-    def __init__(self, sigma:np.ndarray, l:np.ndarray, dim_in:int, dim_out:int):
-        ''' dim_in:     the dimension of input x
-            dim_out:    the dimension of output y
-            l:          the kernel length should be in (dim_in, dim_out) shape
-        '''
-        super().__init__()
-        param = np.concatenate([sigma, l.flatten()])
-        param_t = th.from_numpy(param).to(device)
-        self.rbf_name = "rbf{}".format(RBF.counter)
-        rbf_param = nn.parameter.Parameter(param_t)
-        curr_parameters = Parameters(self.rbf_name, rbf_param)
-
-        self.set_parameters(curr_parameters)
-        assert (dim_in, dim_out) == l.shape, "wrong dimension."
-        assert dim_out == len(sigma), "wrong dimension."
-        self.input_dim = dim_in
-        self.output_dim = dim_out
-        RBF.counter += 1
-    
-    def forward(self, x, y, diag=False):
-        ''' x - (n, nx), y - (h, nx) -> (ny, n, h)
-            if x or y has three axis
-            such as inducing variables:
-            x - (ny, m, nx), y - (h, nx) -> (ny, m, h)
-        '''
-        theta = eval("self.{}".format(self.rbf_name))
-        sigma = theta[:self.output_dim].view(self.output_dim, 1, 1)
-        l = theta[self.output_dim:].view(self.input_dim, self.output_dim).unsqueeze(0) # (1, nx, ny)
-        
-        len_x = x.shape[0] if len(x.shape)==2 else x.shape[1]
-        if diag:
-            assert x.shape == y.shape, "they must be the same input data!"
-            distance = th.zeros(self.output_dim, len_x).to(device).double()
-            return (sigma.squeeze(2) * th.exp( - distance ** 2 )).squeeze()
-        else:
-            if len(x.shape)==3: # say (ny, m, nx)
-                x = x.permute(1, 2, 0) # (m, nx, ny)
-            else:
-                x = x.view(x.shape[0], x.shape[1], 1) # (m, nx, 1)
-            if len(y.shape)==3:
-                y = y.permute(1, 2, 0) # (m, nx, ny)
-            else:
-                y = y.view(y.shape[0], y.shape[1], 1) # (m, nx, 1)
-                
-            x = (x/l).permute(2,0,1).contiguous() # shape: (ny, N, nx)
-            y = (y/l).permute(2,0,1).contiguous() # shape: (ny, M, nx), let's regard ny axis as batch
-            distance = th.cdist(x, y) # (ny, N, M)
-            return sigma * th.exp( - distance ** 2 )
-
-class Matern(Kernel):
-    ''' Matern kernel
-    '''
-    counter = 0
-    
-    def __init__(self, sigma:np.ndarray, mu:float, l:np.ndarray, dim_in:int, dim_out:int):
-        super().__init__()
-        param = np.concatenate([sigma, np.array([mu]), l.flatten()])
-        param_t = th.from_numpy(param).to(device)
-        self.matern_name = "matern{}".format(Matern.counter)
-        matern_param = nn.parameter.Parameter(param_t)
-        curr_parameters = Parameters(self.matern_name, matern_param)
-
-        self.set_parameters(curr_parameters)
-        assert (dim_in, dim_out) == l.shape, "wrong dimension."
-        assert dim_out == len(sigma), "wrong dimension."
-        self.input_dim = dim_in
-        self.output_dim = dim_out
-        Matern.counter += 1
-    
-    def forward(self, x, y, diag=False):
-        ''' x - (n, nx), y - (h, nx) -> (ny, n, h)
-            if x or y has three axis
-            such as inducing variables:
-            x - (ny, m, nx), y - (h, nx) -> (ny, m, h)
-        '''
-        theta = eval("self.{}".format(self.matern_name))
-        sigma = theta[:self.output_dim].view(self.output_dim, 1, 1)
-        mu = theta[self.output_dim:self.output_dim+1]
-        l = theta[self.output_dim+1:].view(self.input_dim, self.output_dim).unsqueeze(0)
-        
-        len_x = x.shape[0] if len(x.shape)==2 else x.shape[1]
-        if len(x.shape)==3: # say (ny, m, nx)
-            x = x.permute(1, 2, 0) # (m, nx, ny)
-        else:
-            x = x.view(x.shape[0], x.shape[1], 1) # (m, nx, 1)
-        if len(y.shape)==3:
-            y = y.permute(1, 2, 0) # (m, nx, ny)
-        else:
-            y = y.view(y.shape[0], y.shape[1], 1) # (m, nx, 1)
-        
-        if diag:
-            pass
-        else:
-            x = (x/l).permute(2,0,1).contiguous() # shape: (ny, N, nx)
-            y = (y/l).permute(2,0,1).contiguous() # shape: (ny, M, nx), let's regard ny axis as batch
-            dists = th.cdist(x, y) # (ny, N, M)
-        if mu == 0.5:
-            if diag:
-                assert x.shape == y.shape, "they must be the same input data!"
-                distance = th.zeros(self.output_dim, len_x).to(device).double()
-                return (sigma.squeeze(2) * th.exp( - distance)).squeeze()
-            else:
-                K = sigma * th.exp(-dists)
-        elif mu == 1.5:
-            if diag:
-                assert x.shape == y.shape, "they must be the same input data!"
-                distance = th.zeros(self.output_dim, len_x).to(device).double()
-                return (sigma.squeeze(2) * (1.0 + distance) * th.exp(-distance)).squeeze()
-            else:
-                K = dists * th.sqrt(th.tensor([3.]).to(device))
-                K = sigma * (1.0 + K) * th.exp(-K)
-        elif mu == 2.5:
-            if diag:
-                assert x.shape == y.shape, "they must be the same input data!"
-                distance = th.zeros(self.output_dim, len_x).to(device).double()
-                return (sigma.squeeze(2) * (1.0 + distance + distance**2 / 3.0) * th.exp(-distance)).squeeze()
-            else:
-                K = dists * th.sqrt(th.tensor([5.]).to(device))
-                K = sigma * (1.0 + K + K**2 / 3.0) * th.exp(-K)
-        elif th.isinf(mu):
-            if diag:
-                assert x.shape == y.shape, "they must be the same input data!"
-                distance = th.zeros(self.output_dim, len_x).to(device).double()
-                return (sigma.squeeze(2) * th.exp(-(distance**2) / 2.0)).squeeze()
-            else:
-                K = sigma * th.exp(-(dists**2) / 2.0)
-        else:  
-            raise NotImplementedError("General cases are expensive to evaluate, please use mu = 0.5, 1.5, 2.5 and Inf")
-        return K
-
-class RQK(Kernel):
-    ''' rational quadratic kernel
-    '''
-    counter = 0
-    
-    def __init__(self, sigma:np.ndarray, alpha:np.ndarray, l:np.ndarray, dim_in:int, dim_out:int):
-        super().__init__()
-        param = np.concatenate([sigma, alpha, l.flatten()])
-        param_t = th.from_numpy(param).to(device)
-        self.rqk_name = "rqk{}".format(RBF.counter)
-        rqk_param = nn.parameter.Parameter(param_t)
-        curr_parameters = Parameters(self.rqk_name, rqk_param)
-
-        self.set_parameters(curr_parameters)
-        assert (dim_in, dim_out) == l.shape, "wrong dimension."
-        assert dim_out == len(sigma), "wrong dimension."
-
-        self.input_dim = dim_in
-        self.output_dim = dim_out
-        RQK.counter += 1
-    
-    def forward(self, x, y, diag=False):
-        ''' x - (n, nx), y - (h, nx) -> (ny, n, h)
-            if x or y has three axis
-            such as inducing variables:
-            x - (ny, m, nx), y - (h, nx) -> (ny, m, h)
-        '''
-        theta = eval("self.{}".format(self.rqk_name))
-        sigma = theta[:self.output_dim].view(self.output_dim, 1, 1)
-        alpha = theta[self.output_dim:2*self.output_dim].view(self.output_dim, 1, 1)
-        l = theta[2*self.output_dim:].view(self.input_dim, self.output_dim).unsqueeze(0)
-        
-        len_x = x.shape[0] if len(x.shape)==2 else x.shape[1]
-        if len(x.shape)==3: # say (ny, m, nx)
-            x = x.permute(1, 2, 0) # (m, nx, ny)
-        else:
-            x = x.view(x.shape[0], x.shape[1], 1) # (m, nx, 1)
-        if len(y.shape)==3:
-            y = y.permute(1, 2, 0) # (m, nx, ny)
-        else:
-            y = y.view(y.shape[0], y.shape[1], 1) # (m, nx, 1)
-        if diag:
-            assert x.shape == y.shape, "they must be the same input data!"
-            distance = th.zeros(self.output_dim, len_x).to(device).double()
-            return (sigma.squeeze(2) * ( 1 + distance ** 2 / alpha.squeeze(2) ) ** (-alpha.squeeze(2))).squeeze()
-        else:
-            x = (x/l).permute(2,0,1).contiguous() # shape: (ny, N, nx)
-            y = (y/l).permute(2,0,1).contiguous() # shape: (ny, M, nx), let's regard ny axis as batch
-            distance = th.cdist(x, y) # (ny, N, M)
-            return sigma * ( 1 + distance ** 2 / alpha ) ** (-alpha)
-    
-class Constant(Kernel):
-    ''' constant kernel
-    '''
-    counter = 0
-    
-    def __init__(self, c:np.ndarray, dim_in:int, dim_out:int):
-        super().__init__()
-        assert dim_out == len(c), "wrong dimension."
-        t = th.from_numpy(c).to(device)
-        self.cons_name = "cons{}".format(Constant.counter)
-        cons_c = nn.parameter.Parameter(t)
-        curr_parameters = Parameters(self.cons_name, cons_c)
-
-        self.input_dim = dim_in
-        self.output_dim = dim_out
-        self.set_parameters(curr_parameters)
-        
-        Constant.counter += 1
-    
-    def forward(self, x, y, diag=False):
-        ''' x - (n, nx), y - (h, nx) -> (ny, n, h)
-            if x or y has three axis
-            such as inducing variables:
-            x - (ny, m, nx), y - (h, nx) -> (ny, m, h)
-        '''
-        c = eval("self.{}".format(self.cons_name))
-        c = c.view(self.output_dim, 1, 1)
-        x_len = x.shape[0] if len(x.shape)==2 else x.shape[1]
-        y_len = y.shape[0] if len(y.shape)==2 else y.shape[1]
-        if diag:
-            assert x.shape == y.shape, "they must be the same input data!"
-            return c.squeeze(2) * th.zeros(self.output_dim, x_len).to(device).double()
-        else:
-            return c * th.ones(self.output_dim, x_len, y_len).to(device)
-
-class DotProduct(Kernel):
-    ''' dot product kernel: theta * x.T @ y
-        l - vector parameter is regarded as diagonal weighting matrix L
-    '''
-    counter = 0
-    
-    def __init__(self, sigma:np.ndarray, c:np.ndarray, dim_in:int, dim_out:int):
-        super().__init__()
-        assert dim_out == len(c), "wrong dimension."
-        l = np.concatenate([c, sigma])
-        t = th.from_numpy(l).to(device)
-        self.dot_name = "dot{}".format(DotProduct.counter)
-        dot_l = nn.parameter.Parameter(t)
-        curr_parameters = Parameters(self.dot_name, dot_l)
-        
-        self.input_dim = dim_in
-        self.output_dim = dim_out
-        self.set_parameters(curr_parameters)
-        Constant.counter += 1
-    
-    def forward(self, x, y, diag=False):
-        ''' x - (n, nx), y - (h, nx) -> (ny, n, h)
-            if x or y has three axis
-            such as inducing variables:
-            x - (ny, m, nx), y - (h, nx) -> (ny, m, h)
-        '''
-        l = eval("self.{}".format(self.dot_name))
-        c, sigma = l[:self.output_dim], l[self.output_dim:]
-        c = c.view(self.output_dim, 1, 1)
-        sigma = sigma.view(self.output_dim, 1, 1)
-        if diag:
-            assert x.shape==y.shape, "They should be same data."
-            if len(x.shape) == 3: # (ny,m,nx) (ny,h,nx) -> (ny,n,h)
-                dot_res = th.einsum("ijk,ijk->ij", x, y)
-            elif len(x.shape) == 2:
-                dot_res = th.einsum("ij,ij->i", x, y)
-                dot_res = dot_res.unsqueeze(0).repeat(self.output_dim, 1)
-            return sigma.squeeze(2) * (dot_res + c.squeeze(2))
-        else:
-            if len(x.shape) == 3 and len(y.shape) == 2: # (ny,m,nx) (h,nx) -> (ny,m,h)
-                dot_res = th.einsum("ijk,mk->ijm", x, y)
-            elif len(x.shape) == 2 and len(y.shape) == 3: # (n,nx) (ny,h,nx) -> (ny,n,h)
-                dot_res = th.einsum("ik,pmk->pim", x, y)
-            elif len(x.shape) == 3 and len(y.shape) == 3: # (ny,m,nx) (ny,h,nx) -> (ny,n,h)
-                dot_res = th.einsum("ijk,iqk->ijq", x, y)
-            else:
-                dot_res = th.einsum("ij,kj->ik", x, y)
-                dot_res = dot_res.unsqueeze(0).repeat(self.output_dim, 1, 1)
-            return sigma * (dot_res + c)
-    
-class White(Kernel):
-    ''' white noise kernel
-    '''
-    counter = 0
-    
-    def __init__(self, c:np.ndarray, dim_in:int, dim_out:int):
-        super().__init__()
-        assert dim_out == len(c), "wrong dimension."
-        t = c
-        t = th.from_numpy(t).to(device)
-        self.white_name = "white{}".format(White.counter)
-        white_c = nn.parameter.Parameter(t)
-        curr_parameters = Parameters(self.white_name, white_c)
-        
-        self.input_dim = dim_in
-        self.output_dim = dim_out
-        self.set_parameters(curr_parameters)
-        White.counter += 1
-    
-    def forward(self, x, y, diag=False):
-        ''' x - (n, nx), y - (h, nx) -> (ny, n, h)
-            if x or y has three axis
-            such as inducing variables:
-            x - (ny, m, nx), y - (h, nx) -> (ny, m, h)
-        '''
-        c = eval("self.{}".format(self.white_name))
-        c = c.view(self.output_dim, 1, 1)
-        x_len = x.shape[0] if len(x.shape)==2 else x.shape[1]
-        y_len = y.shape[0] if len(y.shape)==2 else y.shape[1]
-        if diag:
-            assert x.shape == y.shape, "They should be same data."
-            K = c.squeeze(2) * th.ones(self.output_dim, x_len).double().to(device)
-        else:
-            if x.shape==y.shape and th.all(x == y):
-                K = c * th.eye(x_len).double().to(device).unsqueeze(0).repeat(self.output_dim, 1, 1)
-            else:
-                K = th.zeros((self.output_dim, x_len, y_len)).double().to(device)
-        return K
-    
-    
-# Those functionals were designed to used in computational graph calling.
-# This means that each kernel class will have a functional implemented below.
-
-def rbf(param, x, y, diag):
-    len_x = x.shape[0] if len(x.shape)==2 else x.shape[1]
-    x_dim = x.shape[1] if len(x.shape)==2 else x.shape[2]
-    input_dim = x_dim
-    output_dim = int( len(param) / (input_dim + 1) )
-
-    theta = param
-    sigma = theta[:output_dim].view(output_dim, 1, 1)
-    l = theta[output_dim:].view(input_dim, output_dim).unsqueeze(0) # (1,nx, ny)
-    
-    if diag:
-        assert x.shape == y.shape, "they must be the same input data!"
-        distance = th.zeros(output_dim, len_x).to(device).double()
-        return (sigma.squeeze(2) * th.exp( - distance ** 2 )).squeeze()
-    else:
-        if len(x.shape)==3: # say (ny, m, nx)
-            x = x.permute(1, 2, 0) # (m, nx, ny)
-        else:
-            x = x.view(x.shape[0], x.shape[1], 1) # (m, nx, 1)
-        if len(y.shape)==3:
-            y = y.permute(1, 2, 0) # (m, nx, ny)
-        else:
-            y = y.view(y.shape[0], y.shape[1], 1) # (m, nx, 1)
-            
-        x = (x/l).permute(2,0,1).contiguous() # shape: (ny, N, nx)
-        y = (y/l).permute(2,0,1).contiguous() # shape: (ny, M, nx), let's regard ny axis as batch
-        distance = th.cdist(x, y) # (ny, N, M)
-        return sigma * th.exp( - distance ** 2 )
-
-def cons(param, x, y, diag):
-    output_dim = len(param)
-    c = param
-    c = c.view(output_dim, 1, 1)
-    x_len = x.shape[0] if len(x.shape)==2 else x.shape[1]
-    y_len = y.shape[0] if len(y.shape)==2 else y.shape[1]
-    if diag:
-        assert x.shape == y.shape, "they must be the same input data!"
-        return c.squeeze(2) * th.zeros(output_dim, x_len).to(device).double()
-    else:
-        return c * th.ones(output_dim, x_len, y_len).to(device)
-
-def dot(param, x, y, diag):
-    l = param
-    output_dim = len(param) // 2
-    c, sigma = l[:output_dim], l[output_dim:]
-    c = c.view(output_dim, 1, 1)
-    sigma = sigma.view(output_dim, 1, 1)
-    if diag:
-        assert x.shape==y.shape, "They should be same data."
-        if len(x.shape) == 3: # (ny,m,nx) (ny,h,nx) -> (ny,n,h)
-            dot_res = th.einsum("ijk,ijk->ij", x, y)
-        elif len(x.shape) == 2:
-            dot_res = th.einsum("ij,ij->i", x, y)
-            dot_res = dot_res.unsqueeze(0).repeat(output_dim, 1)
-        return sigma.squeeze(2) * (dot_res + c.squeeze(2))
-    else:
-        if len(x.shape) == 3 and len(y.shape) == 2: # (ny,m,nx) (h,nx) -> (ny,m,h)
-            dot_res = th.einsum("ijk,mk->ijm", x, y)
-        elif len(x.shape) == 2 and len(y.shape) == 3: # (n,nx) (ny,h,nx) -> (ny,n,h)
-            dot_res = th.einsum("ik,pmk->pim", x, y)
-        elif len(x.shape) == 3 and len(y.shape) == 3: # (ny,m,nx) (ny,h,nx) -> (ny,n,h)
-            dot_res = th.einsum("ijk,iqk->ijq", x, y)
-        else:
-            dot_res = th.einsum("ij,kj->ik", x, y)
-            dot_res = dot_res.unsqueeze(0).repeat(output_dim, 1, 1)
-        return sigma * (dot_res + c)
-
-def exponent(param, x, y, diag):
-    return param * 1.
-
-def rqk(param, x, y, diag):
-    x_len = x.shape[0] if len(x.shape)==2 else x.shape[1]
-    x_dim = x.shape[1] if len(x.shape)==2 else x.shape[2]
-    input_dim = x_dim
-    output_dim = int( len(param) / (input_dim + 2) )
-
-    theta = param
-    sigma = theta[:output_dim].view(output_dim, 1, 1)
-    alpha = theta[output_dim:2*output_dim].view(output_dim, 1, 1)
-    l = theta[2*output_dim:].view(input_dim, output_dim).unsqueeze(0) # (1,nx,ny)
-    
-    if len(x.shape)==3: # say (ny, m, nx)
-        x = x.permute(1, 2, 0) # (m, nx, ny)
-    else:
-        x = x.view(x.shape[0], x.shape[1], 1) # (m, nx, 1)
-    if len(y.shape)==3:
-        y = y.permute(1, 2, 0) # (m, nx, ny)
-    else:
-        y = y.view(y.shape[0], y.shape[1], 1) # (m, nx, 1)
-    if diag:
-        assert x.shape == y.shape, "they must be the same input data!"
-        distance = th.zeros(output_dim, x_len).to(device).double()
-        return (sigma.squeeze(2) * ( 1 + distance ** 2 / alpha.squeeze(2) ) ** (-alpha.squeeze(2))).squeeze()
-    else:
-        x = (x/l).permute(2,0,1).contiguous() # shape: (ny, N, nx)
-        y = (y/l).permute(2,0,1).contiguous() # shape: (ny, M, nx), let's regard ny axis as batch
-        distance = th.cdist(x, y) # (ny, N, M)
-        return sigma * ( 1 + distance ** 2 / alpha ) ** (-alpha)
-
-def matern(param, x, y, diag):
-    len_x = x.shape[0] if len(x.shape)==2 else x.shape[1]
-    x_dim = x.shape[1] if len(x.shape)==2 else x.shape[2]
-    input_dim = x_dim
-    output_dim = int( (len(param)-1) / (input_dim + 1) )
-    theta = param
-    sigma = theta[:output_dim].view(output_dim, 1, 1)
-    mu = theta[output_dim:output_dim+1]
-    l = theta[output_dim+1:].view(input_dim, output_dim).unsqueeze(0)
-    
-    if len(x.shape)==3: # say (ny, m, nx)
-        x = x.permute(1, 2, 0) # (m, nx, ny)
-    else:
-        x = x.view(x.shape[0], x.shape[1], 1) # (m, nx, 1)
-    if len(y.shape)==3:
-        y = y.permute(1, 2, 0) # (m, nx, ny)
-    else:
-        y = y.view(y.shape[0], y.shape[1], 1) # (m, nx, 1)
-    
-    if diag:
-        pass
-    else:
-        x = (x/l).permute(2,0,1).contiguous() # shape: (ny, N, nx)
-        y = (y/l).permute(2,0,1).contiguous() # shape: (ny, M, nx), let's regard ny axis as batch
-        dists = th.cdist(x, y) # (ny, N, M)
-    if mu == 0.5:
-        if diag:
-            assert x.shape == y.shape, "they must be the same input data!"
-            distance = th.zeros(output_dim, len_x).to(device).double()
-            return (sigma.squeeze(2) * th.exp( - distance)).squeeze()
-        else:
-            K = sigma * th.exp(-dists)
-    elif mu == 1.5:
-        if diag:
-            assert x.shape == y.shape, "they must be the same input data!"
-            distance = th.zeros(output_dim, len_x).to(device).double()
-            return (sigma.squeeze(2) * (1.0 + distance) * th.exp(-distance)).squeeze()
-        else:
-            K = dists * th.sqrt(th.tensor([3.]).to(device))
-            K = sigma * (1.0 + K) * th.exp(-K)
-    elif mu == 2.5:
-        if diag:
-            assert x.shape == y.shape, "they must be the same input data!"
-            distance = th.zeros(output_dim, len_x).to(device).double()
-            return (sigma.squeeze(2) * (1.0 + distance + distance**2 / 3.0) * th.exp(-distance)).squeeze()
-        else:
-            K = dists * th.sqrt(th.tensor([5.]).to(device))
-            K = sigma * (1.0 + K + K**2 / 3.0) * th.exp(-K)
-    elif th.isinf(mu):
-        if diag:
-            assert x.shape == y.shape, "they must be the same input data!"
-            distance = th.zeros(output_dim, len_x).to(device).double()
-            return (sigma.squeeze(2) * th.exp(-(distance**2) / 2.0)).squeeze()
-        else:
-            K = sigma * th.exp(-(dists**2) / 2.0)
-    else:
-        raise NotImplementedError("General cases are expensive to evaluate, please use mu = 0.5, 1.5, 2.5 and Inf")
-    return K
-
-def white(param, x, y, diag):
-    output_dim = len(param)
-    c = param
-    c = c.view(output_dim, 1, 1)
-
-    x_len = x.shape[0] if len(x.shape)==2 else x.shape[1]
-    y_len = y.shape[0] if len(y.shape)==2 else y.shape[1]
-    if diag:
-        assert x.shape == y.shape, "They should be same data."
-        K = c.squeeze(2) * th.ones(output_dim, x_len).double().to(device)
-    else:
-        if x.shape==y.shape and th.all(x == y):
-            K = c * th.eye(x_len).double().to(device).unsqueeze(0).repeat(output_dim, 1, 1)
-        else:
-            K = th.zeros((output_dim, x_len, y_len)).double().to(device)
-    return K
