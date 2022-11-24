@@ -270,7 +270,7 @@ if __name__ == "__main__":
         th.from_numpy(X).to(device), th.from_numpy(Y).to(device)
     
     # train
-    ind = gpr.fit(Xtrain, Ytrain, m=14, subsetNum=100, no_max_step=False, lr=3e-2, episode=45)
+    ind = gpr.fit(Xtrain, Ytrain, m=13, subsetNum=100, no_max_step=False, lr=3e-2, episode=45)
     
     import time
     s = time.time()
