@@ -402,7 +402,8 @@ class RQK(Kernel):
         return RQK.rqk(theta, x, y, diag)
     
 class Constant(Kernel):
-    ''' constant kernel
+    ''' constant kernel,
+        Comment1:   not recommended to use in variational methods
     '''
     counter = 0
     
@@ -448,11 +449,13 @@ class DotProduct(Kernel):
     '''
     counter = 0
     
-    def __init__(self, sigma:np.ndarray, c:np.ndarray, dim_in:int, dim_out:int):
+    def __init__(self, l:np.ndarray, sigma_a:np.ndarray, sigma_b:np.ndarray, dim_in:int, dim_out:int):
         super().__init__()
-        assert dim_out == len(c), "wrong dimension."
-        l = np.concatenate([c, sigma])
-        t = th.from_numpy(l).to(device)
+        assert dim_out == l.shape[1] == len(sigma_a) == len(sigma_b), "wrong dimension."
+        assert l.shape[0] == dim_in
+        
+        theta = np.concatenate([sigma_a, sigma_b, l.flatten()])
+        t = th.from_numpy(theta).to(device)
         self.dot_name = "dot{}".format(DotProduct.counter)
         dot_l = nn.parameter.Parameter(t)
         curr_parameters = Parameters(self.dot_name, dot_l)
@@ -464,30 +467,35 @@ class DotProduct(Kernel):
     
     @staticmethod
     def dot(param, x, y, diag):
-        l = param
-        output_dim = len(param) // 2
-        c, sigma = l[:output_dim], l[output_dim:]
-        c = c.view(output_dim, 1, 1)
-        sigma = sigma.view(output_dim, 1, 1)
+        x_dim = x.shape[1] if len(x.shape)==2 else x.shape[2]
+        
+        theta = param
+        output_dim = int( len(param) / (x_dim + 2) )
+        # (ny, 1, 1)
+        sigma_a, sigma_b = theta[:output_dim].view(output_dim, 1, 1), theta[output_dim:2*output_dim].view(output_dim, 1, 1)
+        l = theta[2*output_dim:].view(output_dim, x_dim).unsqueeze(1) # (ny, 1, nx)
+
         if diag:
             assert x.shape==y.shape, "They should be same data."
             if len(x.shape) == 3: # (ny,m,nx) (ny,h,nx) -> (ny,n,h)
-                dot_res = th.einsum("ijk,ijk->ij", x, y)
+                dot_res = th.einsum("ijk,ijk->ij", x-l, y-l)
             elif len(x.shape) == 2:
-                dot_res = th.einsum("ij,ij->i", x, y)
-                dot_res = dot_res.unsqueeze(0).repeat(output_dim, 1)
-            return sigma.squeeze(2) * (dot_res + c.squeeze(2))
+                x, y = x.unsqueeze(0), y.unsqueeze(0) #(1,m,nx)
+                dot_res = th.einsum("ijk,ijk->ij", x-l, y-l) # (ny,m,nx)
+            return sigma_a.squeeze(2) + sigma_b.squeeze(2) * dot_res
         else:
             if len(x.shape) == 3 and len(y.shape) == 2: # (ny,m,nx) (h,nx) -> (ny,m,h)
-                dot_res = th.einsum("ijk,mk->ijm", x, y)
+                y = y.unsqueeze(0) # (1,h,nx)
+                dot_res = th.einsum("ijk,imk->ijm", x-l, y-l) # (ny,m,nx) (ny,h,nx) -> (ny,m,h)
             elif len(x.shape) == 2 and len(y.shape) == 3: # (n,nx) (ny,h,nx) -> (ny,n,h)
-                dot_res = th.einsum("ik,pmk->pim", x, y)
+                x = x.unsqueeze(0) # (1,n,nx)
+                dot_res = th.einsum("ijk,imk->ijm", x-l, y-l)
             elif len(x.shape) == 3 and len(y.shape) == 3: # (ny,m,nx) (ny,h,nx) -> (ny,n,h)
-                dot_res = th.einsum("ijk,iqk->ijq", x, y)
+                dot_res = th.einsum("ijk,imk->ijm", x-l, y-l)
             else:
-                dot_res = th.einsum("ij,kj->ik", x, y)
-                dot_res = dot_res.unsqueeze(0).repeat(output_dim, 1, 1)
-            return sigma * (dot_res + c)
+                x, y = x.unsqueeze(0), y.unsqueeze(0) #(1,m,nx)
+                dot_res = th.einsum("ijk,imk->ijm", x-l, y-l)
+            return sigma_a + sigma_b * dot_res
 
     def forward(self, x, y, diag=False):
         ''' x - (n, nx), y - (h, nx) -> (ny, n, h)
@@ -495,8 +503,8 @@ class DotProduct(Kernel):
             such as inducing variables:
             x - (ny, m, nx), y - (h, nx) -> (ny, m, h)
         '''
-        l = eval("self.{}".format(self.dot_name))
-        return DotProduct.dot(l, x, y, diag)
+        theta = eval("self.{}".format(self.dot_name))
+        return DotProduct.dot(theta, x, y, diag)
     
 class White(Kernel):
     ''' white noise kernel
@@ -544,6 +552,66 @@ class White(Kernel):
         c = eval("self.{}".format(self.white_name))
         return White.white(c, x, y, diag)
 
+class RQK(Kernel):
+    ''' rational quadratic kernel
+    '''
+    counter = 0
+    
+    def __init__(self, sigma:np.ndarray, alpha:np.ndarray, l:np.ndarray, dim_in:int, dim_out:int):
+        super().__init__()
+        param = np.concatenate([sigma, alpha, l.flatten()])
+        param_t = th.from_numpy(param).to(device)
+        self.rqk_name = "rqk{}".format(RBF.counter)
+        rqk_param = nn.parameter.Parameter(param_t)
+        curr_parameters = Parameters(self.rqk_name, rqk_param)
+
+        self.set_parameters(curr_parameters)
+        assert (dim_in, dim_out) == l.shape, "wrong dimension."
+        assert dim_out == len(sigma), "wrong dimension."
+
+        self.input_dim = dim_in
+        self.output_dim = dim_out
+        RQK.counter += 1
+    
+    @staticmethod
+    def rqk(param, x, y, diag):
+        x_len = x.shape[0] if len(x.shape)==2 else x.shape[1]
+        x_dim = x.shape[1] if len(x.shape)==2 else x.shape[2]
+        input_dim = x_dim
+        output_dim = int( len(param) / (input_dim + 2) )
+
+        theta = param
+        sigma = theta[:output_dim].view(output_dim, 1, 1)
+        alpha = theta[output_dim:2*output_dim].view(output_dim, 1, 1)
+        l = theta[2*output_dim:].view(input_dim, output_dim).unsqueeze(0) # (1,nx,ny)
+        
+        if len(x.shape)==3: # say (ny, m, nx)
+            x = x.permute(1, 2, 0) # (m, nx, ny)
+        else:
+            x = x.view(x.shape[0], x.shape[1], 1) # (m, nx, 1)
+        if len(y.shape)==3:
+            y = y.permute(1, 2, 0) # (m, nx, ny)
+        else:
+            y = y.view(y.shape[0], y.shape[1], 1) # (m, nx, 1)
+        if diag:
+            assert x.shape == y.shape, "they must be the same input data!"
+            distance = th.zeros(output_dim, x_len).to(device).double()
+            return (sigma.squeeze(2) * ( 1 + distance ** 2 / alpha.squeeze(2) ) ** (-alpha.squeeze(2))).squeeze()
+        else:
+            x = (x/l).permute(2,0,1).contiguous() # shape: (ny, N, nx)
+            y = (y/l).permute(2,0,1).contiguous() # shape: (ny, M, nx), let's regard ny axis as batch
+            distance = th.cdist(x, y) # (ny, N, M)
+            return sigma * ( 1 + distance ** 2 / alpha ) ** (-alpha)
+    
+    def forward(self, x, y, diag=False):
+        ''' x - (n, nx), y - (h, nx) -> (ny, n, h)
+            if x or y has three axis
+            such as inducing variables:
+            x - (ny, m, nx), y - (h, nx) -> (ny, m, h)
+        '''
+        theta = eval("self.{}".format(self.rqk_name))
+        return RQK.rqk(theta, x, y, diag)
+    
 # there is no kernel class for exponent operation, therefore just leave it as a function
 def exponent(param, x, y, diag):
     return param * 1.

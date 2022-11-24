@@ -157,11 +157,10 @@ if __name__ == "__main__":
     sigma = np.array([1., 1.])
     c = np.array([0.1, 0.1])
     
-    kernel = White(c=c, dim_in=1, dim_out=2) + DotProduct(c=c, sigma=sigma, dim_in=1, dim_out=2) ** 2. + RBF(sigma=sigma, l=l, dim_in=1, dim_out=2) +\
-        White(c=c, dim_in=1, dim_out=2) * DotProduct(c=c, sigma=sigma, dim_in=1, dim_out=2) + Constant(c=c, dim_in=1, dim_out=2)
+    kernel = White(c=c, dim_in=1, dim_out=2) + RBF(l=l, sigma=sigma, dim_in=1, dim_out=2)
     gpr = ExactGPR(kernel=kernel)
     
-    train_data_num = 1000 # bug? when n=100
+    train_data_num = 90 # bug? when n=100
     X = np.linspace(-10,10,100).reshape(-1,1)
     Y = np.concatenate([np.cos(X), np.sin(X)], axis=1)
     Xtrain = np.linspace(-10,10,train_data_num).reshape(-1,1)
@@ -180,8 +179,6 @@ if __name__ == "__main__":
         mean, var = gpr.predict(X, return_var=True)
     e = time.time()
     print("The time for each pred: %.5f" % ((e-s)/100))
-    L = Loss(mean, th.cos(mean))
-    print("Loss MSE: %.2f" %  L)
     X = X.detach().cpu().numpy()
     Y = Y.detach().cpu().numpy()
     mean = mean.detach().cpu().numpy()

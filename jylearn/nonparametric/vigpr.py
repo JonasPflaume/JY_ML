@@ -1,24 +1,24 @@
 from jylearn.parametric.regression import Regression
 import torch as th
 import numpy as np
-from torch.optim import Adam
+from torch.optim import LBFGS
 from tqdm import tqdm
 import copy
 device = "cuda" if th.cuda.is_available() else "cpu"
 th.pi = th.tensor([th.acos(th.zeros(1)).item() * 2]).to(device)
 
-def setParams(network:th.nn.Module) -> list:
-        ''' function to set weight decay
-        '''
-        params_dict = dict(network.named_parameters())
-        params=[]
+# def setParams(network:th.nn.Module) -> list:
+#         ''' function to set weight decay
+#         '''
+#         params_dict = dict(network.named_parameters())
+#         params=[]
 
-        for key, value in params_dict.items():
-            if key[-4:] == 'bias':
-                params += [{'params':value}]
-            else:             
-                params +=  [{'params': value}]
-        return params
+#         for key, value in params_dict.items():
+#             if key[-4:] == 'bias':
+#                 params += [{'params':value}]
+#             else:
+#                 params +=  [{'params': value}]
+#         return params
 
 class VariationalEMSparseGPR(Regression):
     
@@ -37,7 +37,7 @@ class VariationalEMSparseGPR(Regression):
         self.kernel = kernel
         self.white_kernel = white_kernle
         
-    def fit(self, X, Y, m, subsetNum=500, lr=5e-3, batch_size=256, episode=50, no_max_step=False):
+    def fit(self, X, Y, m, subsetNum=500, lr=5e-3, episode=50, no_max_step=False):
         '''
             steps:
                     1. e step pick point (for each channel?)
@@ -67,13 +67,13 @@ class VariationalEMSparseGPR(Regression):
             
             # maximization step
             if not no_max_step:
-                curr_mean_elbo = self.hyper_optimization(X, Y, inducing_var_index, lr, batch_size, episode)
+                curr_mean_elbo = self.hyper_optimization(X, Y, inducing_var_index, lr, episode)
             
             pbar.set_description("Current mean elbo: {:.2f}".format(curr_mean_elbo))
             th.cuda.empty_cache()
         
         if no_max_step:
-            curr_mean_elbo = self.hyper_optimization(X, Y, inducing_var_index, lr, batch_size, episode=2000)
+            curr_mean_elbo = self.hyper_optimization(X, Y, inducing_var_index, lr, episode=20)
             
 
         # prepare parameters for the prediction
@@ -127,7 +127,7 @@ class VariationalEMSparseGPR(Regression):
             return mean.T, var.T
         return mean.T
     
-    def hyper_optimization(self, X, Y, inducing_var_index, lr, batch_size, episode=50):
+    def hyper_optimization(self, X, Y, inducing_var_index, lr, episode=5):
         ''' maximization step
         '''
         Xm = []
@@ -137,29 +137,30 @@ class VariationalEMSparseGPR(Regression):
             Xm.append(Xm_y)
         Xm = th.cat(Xm, dim=0) # (ny, m, nx)
 
-        param1 = setParams(self.kernel)
-        param2 = setParams(self.white_kernel)
+        param = list(self.kernel.parameters()) + list(self.white_kernel.parameters())
         
-        optimizer = Adam(params=param1+param2, lr=lr)
-        elbo_epi = 0.
-        for _ in range(episode):
-            batch_index = th.randperm(len(X))[:batch_size]
-            Xb, Yb = X[batch_index], Y[batch_index]
-            
+        optimizer = LBFGS(params=param, lr=lr, max_iter=1)
+                
+        self.elbo_sum = -float("inf")
+        def closure():
             optimizer.zero_grad()
-            elbo_ny = VariationalEMSparseGPR.elbo(self.kernel, self.white_kernel, Xb, Yb, Xm)
-            objective = -elbo_ny.sum()
+            curr_elbo = VariationalEMSparseGPR.elbo(self.kernel, self.white_kernel, X, Y, Xm)
+            curr_elbo = curr_elbo.sum()
+            self.elbo_sum = curr_elbo.item()
+            objective = -curr_elbo
             objective.backward()
-            optimizer.step()
-            elbo_epi += objective.item()
-            # this technique can be used in sgd methods
+            return objective
+        
+        for _ in range(episode):
+            optimizer.step(closure)
+            
             for p in self.kernel.parameters():
                 p.data.clamp_(0)
             
             for p in self.white_kernel.parameters():
-                p.data.clamp_(1e-8)
+                p.data.clamp_(1e-16)
                 
-        return -elbo_epi/episode # return the mean elbo
+        return self.elbo_sum # return the mean elbo
                 
     @staticmethod
     def elbo(kernel, white_kernel, X, Y, Xm):
@@ -254,14 +255,14 @@ if __name__ == "__main__":
     c = np.array([0.3, 0.3])
     
     white_kernel = White(c=c, dim_in=1, dim_out=2)
-    kernel = RBF(l=l, sigma=sigma, dim_in=1, dim_out=2)
+    kernel = RBF(sigma=sigma, l=l, dim_in=1, dim_out=2)
     
     gpr = VariationalEMSparseGPR(kernel=kernel, white_kernle=white_kernel)
     
     train_data_num = 1000 # bug? when n=100
-    X = np.linspace(-10,10,100).reshape(-1,1)
+    X = np.linspace(-20,20,100).reshape(-1,1)
     Y = np.concatenate([np.cos(X), np.sin(X)], axis=1)
-    Xtrain = np.linspace(-10,10,train_data_num).reshape(-1,1)
+    Xtrain = np.linspace(-20,20,train_data_num).reshape(-1,1)
     Ytrain1 = np.cos(Xtrain) + np.random.randn(train_data_num, 1) * 0.3 # add state dependent noise
     Ytrain2 = np.sin(Xtrain) + np.random.randn(train_data_num, 1) * 0.3
     Ytrain = np.concatenate([Ytrain1, Ytrain2], axis=1)
@@ -269,7 +270,7 @@ if __name__ == "__main__":
         th.from_numpy(X).to(device), th.from_numpy(Y).to(device)
     
     # train
-    ind = gpr.fit(Xtrain, Ytrain, m=20, subsetNum=400, no_max_step=False, lr=1e-2, episode=60)
+    ind = gpr.fit(Xtrain, Ytrain, m=14, subsetNum=100, no_max_step=False, lr=3e-2, episode=45)
     
     import time
     s = time.time()
