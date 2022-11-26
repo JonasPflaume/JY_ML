@@ -227,7 +227,7 @@ class RBF(Kernel):
         if diag:
             assert x.shape == y.shape, "they must be the same input data!"
             distance = th.zeros(output_dim, len_x).to(device).double()
-            return (sigma.squeeze(2) * th.exp( - distance ** 2 )).squeeze()
+            return (sigma.squeeze(2) * th.exp( - distance ** 2 ))
         else:
             if len(x.shape)==3: # say (ny, m, nx)
                 x = x.permute(1, 2, 0) # (m, nx, ny)
@@ -302,14 +302,14 @@ class Matern(Kernel):
             if diag:
                 assert x.shape == y.shape, "they must be the same input data!"
                 distance = th.zeros(output_dim, len_x).to(device).double()
-                return (sigma.squeeze(2) * th.exp( - distance)).squeeze()
+                return (sigma.squeeze(2) * th.exp( - distance))
             else:
                 K = sigma * th.exp(-dists)
         elif mu == 1.5:
             if diag:
                 assert x.shape == y.shape, "they must be the same input data!"
                 distance = th.zeros(output_dim, len_x).to(device).double()
-                return (sigma.squeeze(2) * (1.0 + distance) * th.exp(-distance)).squeeze()
+                return (sigma.squeeze(2) * (1.0 + distance) * th.exp(-distance))
             else:
                 K = dists * th.sqrt(th.tensor([3.]).to(device))
                 K = sigma * (1.0 + K) * th.exp(-K)
@@ -317,7 +317,7 @@ class Matern(Kernel):
             if diag:
                 assert x.shape == y.shape, "they must be the same input data!"
                 distance = th.zeros(output_dim, len_x).to(device).double()
-                return (sigma.squeeze(2) * (1.0 + distance + distance**2 / 3.0) * th.exp(-distance)).squeeze()
+                return (sigma.squeeze(2) * (1.0 + distance + distance**2 / 3.0) * th.exp(-distance))
             else:
                 K = dists * th.sqrt(th.tensor([5.]).to(device))
                 K = sigma * (1.0 + K + K**2 / 3.0) * th.exp(-K)
@@ -325,7 +325,7 @@ class Matern(Kernel):
             if diag:
                 assert x.shape == y.shape, "they must be the same input data!"
                 distance = th.zeros(output_dim, len_x).to(device).double()
-                return (sigma.squeeze(2) * th.exp(-(distance**2) / 2.0)).squeeze()
+                return (sigma.squeeze(2) * th.exp(-(distance**2) / 2.0))
             else:
                 K = sigma * th.exp(-(dists**2) / 2.0)
         else:
@@ -385,7 +385,7 @@ class RQK(Kernel):
         if diag:
             assert x.shape == y.shape, "they must be the same input data!"
             distance = th.zeros(output_dim, x_len).to(device).double()
-            return (sigma.squeeze(2) * ( 1 + distance ** 2 / alpha.squeeze(2) ) ** (-alpha.squeeze(2))).squeeze()
+            return (sigma.squeeze(2) * ( 1 + distance ** 2 / alpha.squeeze(2) ) ** (-alpha.squeeze(2)))
         else:
             x = (x/l).permute(2,0,1).contiguous() # shape: (ny, N, nx)
             y = (y/l).permute(2,0,1).contiguous() # shape: (ny, M, nx), let's regard ny axis as batch
@@ -551,66 +551,6 @@ class White(Kernel):
         '''
         c = eval("self.{}".format(self.white_name))
         return White.white(c, x, y, diag)
-
-class RQK(Kernel):
-    ''' rational quadratic kernel
-    '''
-    counter = 0
-    
-    def __init__(self, sigma:np.ndarray, alpha:np.ndarray, l:np.ndarray, dim_in:int, dim_out:int):
-        super().__init__()
-        param = np.concatenate([sigma, alpha, l.flatten()])
-        param_t = th.from_numpy(param).to(device)
-        self.rqk_name = "rqk{}".format(RBF.counter)
-        rqk_param = nn.parameter.Parameter(param_t)
-        curr_parameters = Parameters(self.rqk_name, rqk_param)
-
-        self.set_parameters(curr_parameters)
-        assert (dim_in, dim_out) == l.shape, "wrong dimension."
-        assert dim_out == len(sigma), "wrong dimension."
-
-        self.input_dim = dim_in
-        self.output_dim = dim_out
-        RQK.counter += 1
-    
-    @staticmethod
-    def rqk(param, x, y, diag):
-        x_len = x.shape[0] if len(x.shape)==2 else x.shape[1]
-        x_dim = x.shape[1] if len(x.shape)==2 else x.shape[2]
-        input_dim = x_dim
-        output_dim = int( len(param) / (input_dim + 2) )
-
-        theta = param
-        sigma = theta[:output_dim].view(output_dim, 1, 1)
-        alpha = theta[output_dim:2*output_dim].view(output_dim, 1, 1)
-        l = theta[2*output_dim:].view(input_dim, output_dim).unsqueeze(0) # (1,nx,ny)
-        
-        if len(x.shape)==3: # say (ny, m, nx)
-            x = x.permute(1, 2, 0) # (m, nx, ny)
-        else:
-            x = x.view(x.shape[0], x.shape[1], 1) # (m, nx, 1)
-        if len(y.shape)==3:
-            y = y.permute(1, 2, 0) # (m, nx, ny)
-        else:
-            y = y.view(y.shape[0], y.shape[1], 1) # (m, nx, 1)
-        if diag:
-            assert x.shape == y.shape, "they must be the same input data!"
-            distance = th.zeros(output_dim, x_len).to(device).double()
-            return (sigma.squeeze(2) * ( 1 + distance ** 2 / alpha.squeeze(2) ) ** (-alpha.squeeze(2))).squeeze()
-        else:
-            x = (x/l).permute(2,0,1).contiguous() # shape: (ny, N, nx)
-            y = (y/l).permute(2,0,1).contiguous() # shape: (ny, M, nx), let's regard ny axis as batch
-            distance = th.cdist(x, y) # (ny, N, M)
-            return sigma * ( 1 + distance ** 2 / alpha ) ** (-alpha)
-    
-    def forward(self, x, y, diag=False):
-        ''' x - (n, nx), y - (h, nx) -> (ny, n, h)
-            if x or y has three axis
-            such as inducing variables:
-            x - (ny, m, nx), y - (h, nx) -> (ny, m, h)
-        '''
-        theta = eval("self.{}".format(self.rqk_name))
-        return RQK.rqk(theta, x, y, diag)
     
 # there is no kernel class for exponent operation, therefore just leave it as a function
 def exponent(param, x, y, diag):

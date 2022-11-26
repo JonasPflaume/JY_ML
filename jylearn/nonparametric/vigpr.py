@@ -24,7 +24,7 @@ class VariationalEMSparseGPR(Regression):
     
     def __init__(self, kernel, white_kernle):
         '''
-            Followed the paper of Titsias (2009)
+            Following the paper of Titsias (2009)
             
             Comment 1: EM VIGPR will over-fit !
             
@@ -37,7 +37,12 @@ class VariationalEMSparseGPR(Regression):
         self.kernel = kernel
         self.white_kernel = white_kernle
         
-    def fit(self, X, Y, m, subsetNum=500, lr=5e-3, episode=50, no_max_step=False):
+    def fit(self, X, Y, m, 
+            subsetNum=500, 
+            lr=5e-3, 
+            episode=50, 
+            no_max_step=False, 
+            no_exp_step=False):
         '''
             steps:
                     1. e step pick point (for each channel?)
@@ -54,26 +59,34 @@ class VariationalEMSparseGPR(Regression):
 
         self.kernel.train()
         self.white_kernel.train()
-        curr_mean_elbo = -float("inf")
-        pbar = tqdm(range(m), desc="Current mean elbo: {}".format(curr_mean_elbo))
         inducing_var_index = [[] for _ in range(Y.shape[1])] # 2d list, each entry represents a output channel
-        for i in pbar:
-            # expectation step
-            next_inducing_var = VariationalEMSparseGPR.rank_inducing_variable(self.kernel, self.white_kernel, X, Y, inducing_var_index, subsetNum)
-            # next_inducing_var should be a list with length ny
+        if no_exp_step:
             for j in range(len(inducing_var_index)):
+                inducing_var_index[j] = np.random.choice(np.arange(len(X)), m, replace=False).tolist()
+        else:
+            curr_mean_elbo = -float("inf")
+            pbar = tqdm(range(m), desc="Current mean elbo: {}".format(curr_mean_elbo))
+            for i in pbar:
+                # expectation step
+                next_inducing_var = VariationalEMSparseGPR.rank_inducing_points(self.kernel, self.white_kernel, X, Y, inducing_var_index, subsetNum)
+                # next_inducing_var should be a list with length ny
+                for j in range(len(inducing_var_index)):
+                    
+                    inducing_var_index[j].append(next_inducing_var[j])
                 
-                inducing_var_index[j].append(next_inducing_var[j])
-            
-            # maximization step
-            if not no_max_step:
-                curr_mean_elbo = self.hyper_optimization(X, Y, inducing_var_index, lr, episode)
-            
-            pbar.set_description("Current mean elbo: {:.2f}".format(curr_mean_elbo))
-            th.cuda.empty_cache()
+                # maximization step
+                if not no_max_step:
+                    curr_mean_elbo = self.hyper_optimization(X, Y, inducing_var_index, lr, episode)
+                
+                pbar.set_description("Current mean elbo: {:.2f}".format(curr_mean_elbo))
+                th.cuda.empty_cache()
         
-        if no_max_step:
-            curr_mean_elbo = self.hyper_optimization(X, Y, inducing_var_index, lr, episode=20)
+        if no_max_step or no_exp_step:
+            curr_mean_elbo = -float("inf")
+            pbar = tqdm(range(episode), desc="Current mean elbo: {}".format(curr_mean_elbo))
+            for i in pbar:
+                curr_mean_elbo = self.hyper_optimization(X, Y, inducing_var_index, lr=lr, episode=1)
+                pbar.set_description("Current mean elbo: {:.2f}".format(curr_mean_elbo))
             
 
         # prepare parameters for the prediction
@@ -91,7 +104,7 @@ class VariationalEMSparseGPR(Regression):
         Sigma = Kmm + 1/self.sigma * th.bmm(Kmn, Knm)
         u = th.cholesky(Sigma)
         
-        term1_mu = th.cholesky_solve(th.einsum("ijk,ki->ij", Kmn, Y).unsqueeze(2), u).squeeze() # (ny,m) ?
+        term1_mu = th.cholesky_solve(th.einsum("ijk,ki->ij", Kmn, Y).unsqueeze(2), u).squeeze(2) # (ny,m) ?
         term2_A = th.cholesky_solve(Kmm, u) # (ny,m,m)
         mu = 1/self.sigma.squeeze(2) * th.einsum("ijk,ik->ij", Kmm, term1_mu) # (ny,m)
         self.Kmm_inv = th.cholesky(Kmm)
@@ -135,6 +148,7 @@ class VariationalEMSparseGPR(Regression):
             Xm_y_index = inducing_var_index[i]
             Xm_y = X[Xm_y_index].unsqueeze(0)
             Xm.append(Xm_y)
+            
         Xm = th.cat(Xm, dim=0) # (ny, m, nx)
 
         param = list(self.kernel.parameters()) + list(self.white_kernel.parameters())
@@ -158,7 +172,7 @@ class VariationalEMSparseGPR(Regression):
                 p.data.clamp_(0)
             
             for p in self.white_kernel.parameters():
-                p.data.clamp_(1e-16)
+                p.data.clamp_(1e-6)
                 
         return self.elbo_sum # return the mean elbo
                 
@@ -206,7 +220,7 @@ class VariationalEMSparseGPR(Regression):
         return Fv
 
     @staticmethod
-    def rank_inducing_variable(kernel, white_kernel, X, Y, inducing_var_index, subsetNum) -> list:
+    def rank_inducing_points(kernel, white_kernel, X, Y, inducing_var_index, subsetNum) -> list:
         ''' expectation step
             inducing_var_index: A list has ny lists.
             subsetNum:          the maximum evaluating subset
@@ -259,7 +273,7 @@ if __name__ == "__main__":
     
     gpr = VariationalEMSparseGPR(kernel=kernel, white_kernle=white_kernel)
     
-    train_data_num = 1000 # bug? when n=100
+    train_data_num = 10000 # bug? when n=100
     X = np.linspace(-20,20,100).reshape(-1,1)
     Y = np.concatenate([np.cos(X), np.sin(X)], axis=1)
     Xtrain = np.linspace(-20,20,train_data_num).reshape(-1,1)
@@ -270,7 +284,7 @@ if __name__ == "__main__":
         th.from_numpy(X).to(device), th.from_numpy(Y).to(device)
     
     # train
-    ind = gpr.fit(Xtrain, Ytrain, m=13, subsetNum=100, no_max_step=False, lr=3e-2, episode=45)
+    ind = gpr.fit(Xtrain, Ytrain, m=13, subsetNum=200, lr=3e-2, episode=35)
     
     import time
     s = time.time()
