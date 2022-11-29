@@ -39,9 +39,9 @@ class VariationalEMSparseGPR(Regression):
         
     def fit(self, X, Y, m, 
             subsetNum=500, 
-            lr=5e-3, 
-            episode=50, 
-            no_max_step=False, 
+            lr=5e-3,
+            stop_criterion=1e-3,
+            no_max_step=False,
             no_exp_step=False):
         '''
             steps:
@@ -76,18 +76,14 @@ class VariationalEMSparseGPR(Regression):
                 
                 # maximization step
                 if not no_max_step:
-                    curr_mean_elbo = self.hyper_optimization(X, Y, inducing_var_index, lr, episode)
+                    curr_mean_elbo = self.hyper_optimization(X, Y, inducing_var_index, lr, stop_criterion)
                 
                 pbar.set_description("Current mean elbo: {:.2f}".format(curr_mean_elbo))
                 th.cuda.empty_cache()
         
         if no_max_step or no_exp_step:
-            curr_mean_elbo = -float("inf")
-            pbar = tqdm(range(episode), desc="Current mean elbo: {}".format(curr_mean_elbo))
-            for i in pbar:
-                curr_mean_elbo = self.hyper_optimization(X, Y, inducing_var_index, lr=lr, episode=1)
-                pbar.set_description("Current mean elbo: {:.2f}".format(curr_mean_elbo))
-            
+            curr_mean_elbo = self.hyper_optimization(X, Y, inducing_var_index, lr=lr)
+            print("Current elbo: {:.2f}".format(curr_mean_elbo))
 
         # prepare parameters for the prediction
         self.sigma = dict(self.white_kernel.named_parameters())[self.white_kernel.white_name].view(-1,1,1) # (ny,1,1)
@@ -140,7 +136,7 @@ class VariationalEMSparseGPR(Regression):
             return mean.T, var.T
         return mean.T
     
-    def hyper_optimization(self, X, Y, inducing_var_index, lr, episode=5):
+    def hyper_optimization(self, X, Y, inducing_var_index, lr, stop_criterion):
         ''' maximization step
         '''
         Xm = []
@@ -153,7 +149,7 @@ class VariationalEMSparseGPR(Regression):
 
         param = list(self.kernel.parameters()) + list(self.white_kernel.parameters())
         
-        optimizer = LBFGS(params=param, lr=lr, max_iter=1)
+        optimizer = LBFGS(params=param, lr=lr, max_iter=200, tolerance_change=stop_criterion)
                 
         self.elbo_sum = -float("inf")
         def closure():
@@ -163,16 +159,15 @@ class VariationalEMSparseGPR(Regression):
             self.elbo_sum = curr_elbo.item()
             objective = -curr_elbo
             objective.backward()
-            return objective
-        
-        for _ in range(episode):
-            optimizer.step(closure)
             
             for p in self.kernel.parameters():
-                p.data.clamp_(0)
-            
+                p.data.clamp_(1e-8)
+        
             for p in self.white_kernel.parameters():
-                p.data.clamp_(1e-6)
+                p.data.clamp_(1e-8)
+            return objective
+        
+        optimizer.step(closure)
                 
         return self.elbo_sum # return the mean elbo
                 
@@ -191,18 +186,23 @@ class VariationalEMSparseGPR(Regression):
 
         F0 = - n/2 * th.log(2*th.pi) - (n-m)/2 * th.log(output_noise.squeeze()) - 1/(2*output_noise.squeeze()) * th.einsum("ij,ij->j", Y, Y)
 
-        Kmm = kernel(Xm, Xm) + th.eye(m,m).to(device).double() * 1e-6 # (ny, m, m)
+        Kmm = kernel(Xm, Xm) # (ny, m, m)
         F1 = 0.5 * th.log( th.diagonal(Kmm, dim1=1, dim2=2) ).sum(dim=1)
 
         Kmn= kernel(Xm, X)
         Knm = Kmn.permute(0,2,1)
         Kmn_Knm = th.bmm(Kmn, Knm) # (ny,m,m)
-        Term1 = output_noise * Kmm + Kmn_Knm + th.eye(m,m).to(device).double() * 1e-6
+        Term1 = output_noise * Kmm + Kmn_Knm
         
         F2 = -0.5 * th.log( th.diagonal(Term1, dim1=1, dim2=2) ).sum(dim=1)
 
         # there is any problem with F3 term
-        u = th.cholesky(Term1) # (ny,m,m)
+        try:
+            u = th.cholesky(Term1) # (ny,m,m)
+        except:
+            Term1 = Term1 + th.eye(m,m).to(device).double() * 1e-6
+            u = th.cholesky(Term1)
+            
         b = th.einsum("ijk,ki->ij", Kmn, Y) # (ny,m)
         inv_Term1 = th.cholesky_solve(b.unsqueeze(2), u).squeeze(2) # (ny,m)
 
@@ -212,7 +212,12 @@ class VariationalEMSparseGPR(Regression):
         diag_terms = kernel(X, X, diag=True)
         F4 = - 1/(2*output_noise.squeeze()) * th.sum(diag_terms, dim=1)
         
-        u = th.cholesky(Kmm) # (ny,m,m)
+        try:
+            u = th.cholesky(Kmm) # (ny,m,m)
+        except:
+            Kmm = Kmm + th.eye(m,m).to(device).double() * 1e-6
+            u = th.cholesky(Kmm)
+            
         inside_trace = th.cholesky_solve(Kmn_Knm, u) # (ny,m,m)
         F5 = 1/(2*output_noise.squeeze()) * inside_trace.diagonal(offset=0, dim1=-1, dim2=-2).sum(-1)
 
@@ -284,7 +289,7 @@ if __name__ == "__main__":
         th.from_numpy(X).to(device), th.from_numpy(Y).to(device)
     
     # train
-    ind = gpr.fit(Xtrain, Ytrain, m=13, subsetNum=200, lr=3e-2, episode=35)
+    ind = gpr.fit(Xtrain, Ytrain, m=13, subsetNum=200, lr=1e-2)
     
     import time
     s = time.time()
