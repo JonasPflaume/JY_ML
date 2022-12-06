@@ -83,12 +83,12 @@ class DMDc:
         X = []
         
         for ui in U:
+            X.append(x.reshape(1,-1))
             x_f = self.feature_transform(x)
             if np.any(x_f == np.NaN) or np.any(x_f == np.inf):
                 raise ValueError("The identified system is not stable!")
             x_f_p = self.A @ x_f.T + self.B @ ui.reshape(-1,1)
             x_p = self.C @ x_f_p
-            X.append(x.reshape(1,-1))
             x = x_p.T
         X.append(x.reshape(1,-1))
         X = np.concatenate(X)

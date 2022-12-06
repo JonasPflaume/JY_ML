@@ -40,7 +40,7 @@ class VariationalEMSparseGPR(Regression):
     def fit(self, X, Y, m, 
             subsetNum=500, 
             lr=5e-3,
-            stop_criterion=1e-3,
+            stop_criterion=1e-4,
             no_max_step=False,
             no_exp_step=False):
         '''
@@ -82,7 +82,7 @@ class VariationalEMSparseGPR(Regression):
                 th.cuda.empty_cache()
         
         if no_max_step or no_exp_step:
-            curr_mean_elbo = self.hyper_optimization(X, Y, inducing_var_index, lr=lr)
+            curr_mean_elbo = self.hyper_optimization(X, Y, inducing_var_index, lr, stop_criterion)
             print("Current elbo: {:.2f}".format(curr_mean_elbo))
 
         # prepare parameters for the prediction
@@ -159,7 +159,6 @@ class VariationalEMSparseGPR(Regression):
             self.elbo_sum = curr_elbo.item()
             objective = -curr_elbo
             objective.backward()
-            
             for p in self.kernel.parameters():
                 p.data.clamp_(1e-8)
         
@@ -278,7 +277,7 @@ if __name__ == "__main__":
     
     gpr = VariationalEMSparseGPR(kernel=kernel, white_kernle=white_kernel)
     
-    train_data_num = 10000 # bug? when n=100
+    train_data_num = 1000 # bug? when n=100
     X = np.linspace(-20,20,100).reshape(-1,1)
     Y = np.concatenate([np.cos(X), np.sin(X)], axis=1)
     Xtrain = np.linspace(-20,20,train_data_num).reshape(-1,1)
@@ -305,8 +304,8 @@ if __name__ == "__main__":
     plt.figure(figsize=[6,8])
     plt.subplot(211)
     plt.plot(X, mean[:,0], label="mean")
-    plt.plot(X, mean[:,0] + 5*var[:,0], '-.r', label="var")
-    plt.plot(X, mean[:,0] - 5*var[:,0], '-.r')
+    plt.plot(X, mean[:,0] + 1.96*var[:,0], '-.r', label="var")
+    plt.plot(X, mean[:,0] - 1.96*var[:,0], '-.r')
     plt.plot(X, Y[:,0], label="GroundTueth")
     plt.plot(Xtrain[ind[0]], Ytrain[ind[0],0], 'c*')
     plt.plot(Xtrain, Ytrain[:,0], 'rx', label="data", alpha=0.3)
@@ -315,8 +314,8 @@ if __name__ == "__main__":
     
     plt.subplot(212)
     plt.plot(X, mean[:,1], label="mean")
-    plt.plot(X, mean[:,1] + 5*var[:,1], '-.r', label="var")
-    plt.plot(X, mean[:,1] - 5*var[:,1], '-.r')
+    plt.plot(X, mean[:,1] + 1.96*var[:,1], '-.r', label="var")
+    plt.plot(X, mean[:,1] - 1.96*var[:,1], '-.r')
     plt.plot(X, Y[:,1], label="GroundTueth")
     plt.plot(Xtrain[ind[1]], Ytrain[ind[1], 1], 'c*')
     plt.plot(Xtrain, Ytrain[:,1], 'rx', label="data", alpha=0.3)
