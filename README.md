@@ -3,7 +3,10 @@ The **SARCOS** dataset, which is intended for a regression problem of robot inve
 The gym **pendulum** environment is chosen to be the benchmark of control projects.
   
   
-Update: 31.11.2022, the kernel classes enabling the kernel operations (add, multiply and exponent) has been finished. Exact GPR and variational EM sparse GPR were implemented.
+Update:  
+31.11.2022, the kernel classes enabling the kernel operations (add, multiply and exponent) has been finished. Exact GPR and variational EM sparse GPR were implemented.
+
+07.12.2022, add an example of a variational autoencoder for minist.
 
 Finished comparison:
 #### Machine learning  
