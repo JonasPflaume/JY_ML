@@ -30,8 +30,8 @@ class VAE(nn.Module):
         for epoch_i in range(epoch):
             epoch_loss = 0.
             b_index = th.randperm(len(X))
-            
-            for batch_i in range(len(X)//batch_size):
+            batch_num = len(X)//batch_size
+            for batch_i in range(batch_num):
                 optimizer.zero_grad()
                 
                 X_b_index = b_index[batch_i*batch_size:(batch_i+1)*batch_size]
@@ -46,7 +46,7 @@ class VAE(nn.Module):
                 
                 optimizer.step()
             
-            print("== Epoch {1} Elbo Loss: {0:.2f} ==".format(epoch_loss, epoch_i))
+            print("== Epoch {1} Elbo Loss: {0:.2f} ==".format(epoch_loss/batch_num, epoch_i))
         
         self.encoder.eval()
         self.decoder.eval()
@@ -100,10 +100,10 @@ if __name__ == "__main__":
     
     obs_dim = 28 * 28
     latent_dim = 2
-    encoder_hyperparam = {"layer":5, "nodes":[obs_dim, 350, 150, 30, latent_dim*2], "actfunc":["ReLU", "ReLU", "ReLU", None]}
-    decoder_hyperparam = {"layer":5, "nodes":[latent_dim, 30, 150, 350, obs_dim], "actfunc":["ReLU", "ReLU", "ReLU", "Sigmoid"]}
+    encoder_hyperparam = {"layer":5, "nodes":[obs_dim, 350, 150, 30, latent_dim*2], "actfunc":["LeakyReLU", "LeakyReLU", "LeakyReLU", None]}
+    decoder_hyperparam = {"layer":5, "nodes":[latent_dim, 30, 150, 350, obs_dim], "actfunc":["LeakyReLU", "LeakyReLU", "LeakyReLU", "Sigmoid"]}
     vae = VAE(obs_dim, latent_dim, encoder_hyperparam, decoder_hyperparam)
-    vae.train(X, 5e-4, epoch=50, batch_size=128)
+    vae.train(X, 3e-4, epoch=50, batch_size=128)
     sampling = vae.sampling_from_latent_space()
     
     sampling = sampling.reshape(-1,28,28) * 255.

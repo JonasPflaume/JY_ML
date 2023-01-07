@@ -22,8 +22,8 @@ def collect_rollouts(system, num, traj_len):
             counter += 1
             x_curr, rewards, dones = system.step(ui)
             X_l[-1].append(x_curr.reshape(1,-1).copy())
-            if np.any( np.abs(x_curr) > np.array([2.5*np.pi, 8])):
-                break
+            # if np.any( np.abs(x_curr) > np.array([2.5*np.pi, 8])):
+            #     break
         U_l.append(U[:counter,:].copy())
     X_l = [np.concatenate(elem) for elem in X_l]
     

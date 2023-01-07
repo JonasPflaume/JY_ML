@@ -1,8 +1,7 @@
-
 import numpy as np
 
 class DMDc:
-    def __init__(self, feature_funcs):
+    def __init__(self):
         ''' the <extended dynamic mode decomposition with control>
             for signal or time series prediction.
             This implementation follows:
@@ -11,30 +10,30 @@ class DMDc:
               
             feature_funcs is a list of feature functions
         '''
-        self.feature_funcs = feature_funcs
         
-    def feature_transform(self, X):
+    def feature_transform(self, X, feature_funcs):
         ''' the featuren transformation of a series of feature function
         '''
-        X_f = self.feature_funcs[0](X)
-        for i in range(1,len(self.feature_funcs)):
-            X_f = self.feature_funcs[i](X_f)
+        X_f = feature_funcs[0](X)
+        for i in range(1,len(feature_funcs)):
+            X_f = feature_funcs[i](X_f)
         return X_f
         
-    def fit(self, X_data, U_data):
+    def fit(self, X_data, U_data, feature_funcs):
         ''' X-state and U-control
             X_data - (L, n)
             U_data - (L-1, m)
         '''
+        self.feature_funcs = feature_funcs
         if type(X_data) == list:
-            X, Y, X_f, Y_f, U = self.__data_from_rollouts(X_data, U_data)
+            X, Y, X_f, Y_f, U = self.__data_from_rollouts(X_data, U_data, feature_funcs)
         else:
             X, Y = X_data[:-1,:], X_data[1:,:] # (L-1, n)
-            X_f, Y_f = self.feature_transform(X), self.feature_transform(Y) # (L-1, f)
+            X_f, Y_f = self.feature_transform(X, feature_funcs), self.feature_transform(Y, feature_funcs) # (L-1, f)
             U = U_data
             
         X, Y, X_f, Y_f, U = X.T, Y.T, X_f.T, Y_f.T, U.T
-        
+
         G = np.concatenate([X_f, U], axis=0)
         G = G @ G.T
         V = Y_f @ np.concatenate([X_f, U], axis=0).T
@@ -49,16 +48,16 @@ class DMDc:
         self.A, self.B, self.C = A, B, C
         return A, B, C
     
-    def __data_from_rollouts(self, X_l, U_l):
+    def __data_from_rollouts(self, X_l, U_l, feature_funcs):
         X, Y = X_l[0][:-1,:], X_l[0][1:,:]
-        X_f, Y_f = self.feature_transform(X), self.feature_transform(Y)
+        X_f, Y_f = self.feature_transform(X, feature_funcs), self.feature_transform(Y, feature_funcs)
         U = U_l[0]
         for k in range(1, len(X_l)):
             Xk, Yk = X_l[k][:-1,:], X_l[k][1:,:]
             X = np.concatenate([X, Xk])
             Y = np.concatenate([Y, Yk])
-            Xk_f = self.feature_transform(Xk)
-            Yk_f = self.feature_transform(Yk)
+            Xk_f = self.feature_transform(Xk, feature_funcs)
+            Yk_f = self.feature_transform(Yk, feature_funcs)
             X_f = np.concatenate([X_f, Xk_f])
             Y_f = np.concatenate([Y_f, Yk_f])
             U = np.concatenate([U, U_l[k]])
@@ -69,7 +68,10 @@ class DMDc:
             x - (1, n)
             u - (1, m)
         '''
-        x_f = self.feature_transform(x)
+        if hasattr(self, "feature_transform"):
+            x_f = self.feature_transform(x, self.feature_funcs)
+        else:
+            raise LookupError("You should run fit function first.")
         x_f_p = self.A @ x_f.T + self.B @ u.T
         x_p = self.C @ x_f_p
         
@@ -81,10 +83,13 @@ class DMDc:
             U - (T, m)
         '''
         X = []
-        
+        if hasattr(self, "feature_transform"):
+            pass
+        else:
+            raise LookupError("You should run fit function first.")
         for ui in U:
             X.append(x.reshape(1,-1))
-            x_f = self.feature_transform(x)
+            x_f = self.feature_transform(x, self.feature_funcs)
             if np.any(x_f == np.NaN) or np.any(x_f == np.inf):
                 raise ValueError("The identified system is not stable!")
             x_f_p = self.A @ x_f.T + self.B @ ui.reshape(-1,1)
@@ -120,15 +125,15 @@ if __name__ == "__main__":
     
     # 500 trajs, each has 200 steps.
     # This is designed to has the same env quiries with RL controller SAC.
-    X_l, U_l = collect_rollouts(p, 500, 100)
+    X_l, U_l = collect_rollouts(p, 50, 150)
     # with open('train_data.pkl','wb') as f:
     #     pickle.dump([X_l, U_l], f)
         
     # with open('train_data.pkl','rb') as f:
     #     X_l, U_l = pickle.load(f)
         
-    edmdc = DMDc(f_l)
-    A, B, C = edmdc.fit(X_l, U_l)
+    edmdc = DMDc()
+    A, B, C = edmdc.fit(X_l, U_l, f_l)
     
     # test
     X_test, U_test = collect_rollouts(p, 9, 200) # let's show 9 prediction results
