@@ -18,7 +18,8 @@ REQUIRED = [
     "gym==0.21.0",
     "sklearn",
     "stable-baselines3==1.0",
-    "gpytorch"
+    "gpytorch",
+    "casadi"
 ]
 
 setup(

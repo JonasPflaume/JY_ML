@@ -13,6 +13,10 @@ from tqdm import tqdm
 from collections import OrderedDict
 device = "cuda" if th.cuda.is_available() else "cpu"
 
+##########
+####        comment: learning the lifting function directly with MLP is a bad idea !
+#########
+
 class StateMatricesDataset(data.Dataset):
     ''' generate the trajectory for transition matrices fitting
     '''
@@ -229,13 +233,13 @@ if __name__ == "__main__":
     X_lv, U_lv = collect_rollouts(p, 9, 150)
     dataset1 = StateMatricesDataset(X_list=X_l, U_list=U_l)
     dataset2 = TripletsDataset(X_list=X_l, U_list=U_l)
-    matrices_dataset = data.DataLoader(dataset=dataset1, batch_size=100, shuffle=True)
+    matrices_dataset = data.DataLoader(dataset=dataset1, batch_size=200, shuffle=True)
     triplet_dataset = data.DataLoader(dataset=dataset2, batch_size=len(dataset2), shuffle=True)
     
     dataset1v = StateMatricesDataset(X_list=X_lv, U_list=U_lv)
     matrices_dataset_vali = data.DataLoader(dataset=dataset1v, batch_size=1, shuffle=False)
     
-    hyper = {"layer":4, "nodes":[2,4,8,30], "actfunc":["ReLU", "ReLU", None]}
+    hyper = {"layer":4, "nodes":[2,4,8,16], "actfunc":["ReLU", "ReLU", None]}
     
     mlpdmdc = MLPDMDc(hyper)
-    mlpdmdc.fit(matrices_dataset, triplet_dataset, matrices_dataset_vali, 1e-3, 500, '/home/jiayun/Desktop/MY_ML/jylearn/timeseries/runs')
+    mlpdmdc.fit(matrices_dataset, triplet_dataset, matrices_dataset_vali, 3e-3, 500, '/home/jiayun/Desktop/MY_ML/jylearn/timeseries/runs')
