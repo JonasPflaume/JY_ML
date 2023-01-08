@@ -34,4 +34,4 @@ Notes:
 3. Finite horizon LQR based on Dynamic mode decomposition(DMD). Not working, the tracking objective function is hard to define.  
 4. MPC with the model learned through DMD. Very naive implementation, the symbolic feature expansion limits the speed of solution. There are better ways to include the nonlinear objective function into koopman feature.  
 5. MPC with Runge Kutta 4th order simulation on ground-truth ode. This approach can't let the gym rendering in real time.  
-6. The variational GPR is not suitable for inverse dynamics learning. Because there is no obvious hidden structure of this dynamic system.  
+6. The variational GPR is not suitable for inverse dynamics learning. Because there is no obvious hidden structure of this learning problem.  
