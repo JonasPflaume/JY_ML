@@ -14,7 +14,9 @@ from collections import OrderedDict
 device = "cuda" if th.cuda.is_available() else "cpu"
 
 ##########
-####        comment: learning the lifting function directly with MLP is a bad idea !
+####        comment1: learning the lifting function in very high dimension directly with MLP is a bad idea !
+####                  serverely overfitting!
+####        comment2: numerical instability can be solved using the latest pytorch with torch.linalg.pinv
 #########
 
 class StateMatricesDataset(data.Dataset):
@@ -78,6 +80,7 @@ class MLPDMDc:
         '''
         '''
         self.lifting_func = MLP(hyperparam=hyperparameters).to(device).double()
+        self.neural_network_hyperparams = hyperparameters
         self.loss_func = MSELoss(reduction='sum')
         print(self.lifting_func)
         
@@ -97,7 +100,9 @@ class MLPDMDc:
         traj_X_batch, traj_Y_batch, traj_U_batch = next(matrices_dataset)
         traj_X_batch = traj_X_batch.to(device)
         traj_Y_batch = traj_Y_batch.to(device)
-        
+        A_dim = traj_X_batch.shape[2] + self.neural_network_hyperparams["nodes"][-1]
+        B_dim = traj_U_batch.shape[2]
+        self.A, self.B = th.eye(A_dim).to(device).double(), th.zeros(A_dim, B_dim).to(device).double()
         for epoch in tqdm(range(num_epoch)):
             self.lifting_func.train()
             epoch_loss = 0.0
@@ -109,7 +114,9 @@ class MLPDMDc:
                 traj_Y_batch_lift = self.lifting_func(traj_Y_batch)
                 
                 traj_U_batch = traj_U_batch.to(device)
-                self.A, self.B = self.get_state_matrices(traj_X_batch, traj_Y_batch, traj_X_batch_lift, traj_Y_batch_lift, traj_U_batch) # A, B should be (xl, xl) and (xl, u), not a batch data
+                A, B = self.get_state_matrices(traj_X_batch, traj_Y_batch, traj_X_batch_lift, traj_Y_batch_lift, traj_U_batch) # A, B should be (xl, xl) and (xl, u), not a batch data
+                self.A = 0.3 * A + 0.7 * self.A
+                self.B = 0.3 * B + 0.7 * self.B
                 
                 # batch loss simulation
                 
@@ -119,7 +126,7 @@ class MLPDMDc:
 
                 x_batch_lift = self.lifting_func(x_batch)
                 x_shift_batch_lift = self.lifting_func(x_shift_batch)
-                batch_loss = self.get_triplet_loss(self.A, self.B, x_batch, x_shift_batch, x_batch_lift, x_shift_batch_lift, u_batch)
+                batch_loss = self.get_triplet_loss(A, B, x_batch, x_shift_batch, x_batch_lift, x_shift_batch_lift, u_batch)
                 
                 optimizer.zero_grad()
                 batch_loss.backward()
@@ -129,7 +136,7 @@ class MLPDMDc:
                     
             epoch_loss /= len(triplet_dataset)
             writer.add_scalar("training loss", epoch_loss, global_step= epoch + 1)
-            if epoch % 20 == 0:
+            if epoch % 5 == 0:
                 vali_fig = self.validate(matrices_dataset_vali)
                 writer.add_figure("forward prediction", vali_fig, global_step= epoch + 1)
         
@@ -150,7 +157,7 @@ class MLPDMDc:
             gt_trajs.append(gt_traj_)
             
         # start plotting
-        vali_fig = plt.figure(figsize=[7.5,5])
+        vali_fig = plt.figure(figsize=[10,7])
         for i in range(9):
             plt.subplot(int("33{}".format(i+1)))
             pred_traj = predict_trajs[i]
@@ -188,7 +195,7 @@ class MLPDMDc:
 
         V = th.transpose(Yl_, 0, 1) @ th.cat([Xl_, U], dim=1) # Yl:(l,xl_dim) -> (xl_dim, xl_dim + u_dim)
         
-        M = V @ th.linalg.pinv(G_)
+        M = V @ th.pinverse(G_)
 
         A, B = M[:, :(Xl.shape[1]+X.shape[1])], M[:, (Xl.shape[1]+X.shape[1]):]
         return A, B
@@ -229,17 +236,17 @@ if __name__ == "__main__":
     from jycontrol.system import Pendulum
     
     p = Pendulum()
-    X_l, U_l = collect_rollouts(p, 200, 150)
+    X_l, U_l = collect_rollouts(p, 500, 150)
     X_lv, U_lv = collect_rollouts(p, 9, 150)
     dataset1 = StateMatricesDataset(X_list=X_l, U_list=U_l)
     dataset2 = TripletsDataset(X_list=X_l, U_list=U_l)
-    matrices_dataset = data.DataLoader(dataset=dataset1, batch_size=200, shuffle=True)
+    matrices_dataset = data.DataLoader(dataset=dataset1, batch_size=500, shuffle=True)
     triplet_dataset = data.DataLoader(dataset=dataset2, batch_size=len(dataset2), shuffle=True)
     
     dataset1v = StateMatricesDataset(X_list=X_lv, U_list=U_lv)
     matrices_dataset_vali = data.DataLoader(dataset=dataset1v, batch_size=1, shuffle=False)
     
-    hyper = {"layer":4, "nodes":[2,4,8,16], "actfunc":["ReLU", "ReLU", None]}
+    hyper = {"layer":4, "nodes":[2,5,9,18], "actfunc":["ReLU", "ReLU", None]}
     
     mlpdmdc = MLPDMDc(hyper)
-    mlpdmdc.fit(matrices_dataset, triplet_dataset, matrices_dataset_vali, 3e-3, 500, '/home/jiayun/Desktop/MY_ML/jylearn/timeseries/runs')
+    mlpdmdc.fit(matrices_dataset, triplet_dataset, matrices_dataset_vali, 4e-3, 1000, '/home/jiayun/Desktop/MY_ML/jylearn/timeseries/runs')

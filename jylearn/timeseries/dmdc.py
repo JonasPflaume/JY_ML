@@ -136,7 +136,7 @@ if __name__ == "__main__":
     A, B, C = edmdc.fit(X_l, U_l, f_l)
     
     # test
-    X_test, U_test = collect_rollouts(p, 9, 200) # let's show 9 prediction results
+    X_test, U_test = collect_rollouts(p, 9, 150) # let's show 9 prediction results
     plt.figure(figsize=[15,10])
     for i in range(9):
         plt.subplot(int("33{}".format(i+1)))
