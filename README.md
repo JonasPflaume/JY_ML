@@ -1,17 +1,20 @@
 ### JY's machine learning and control workspace, 
-The **SARCOS** dataset, which is intended for a regression problem of robot inverse dynamics, is regarded as the benchmark of ML.  
+The **SARCOS** dataset, which is intended for a regression problem for robot inverse dynamics, is regarded as the benchmark of supervised learning algorithms.  
 The gym **pendulum** environment is chosen to be the benchmark of control projects.
   
   
 Update:  
+08.01.2021 the numerical koopman DMDc with fixed lifting function and neural networks were implemented.
+
 31.11.2022, the kernel classes enabling the kernel operations (add, multiply and exponent) has been finished. Exact GPR and variational EM sparse GPR were implemented.
 
 07.12.2022, add an example of a variational autoencoder for minist.
 
 Finished comparison:
-#### Machine learning  
+#### Supervised learning  
 | Approach      | MSE           |
 | ------------- |:-------------:|
+| VIGPR<sup>6 </sup>	|   2.879	|
 | Ridge + feature      | 2.111 |
 | MLP      | 1.469      |
 | ... |       |
@@ -31,3 +34,4 @@ Notes:
 3. Finite horizon LQR based on Dynamic mode decomposition(DMD). Not working, the tracking objective function is hard to define.  
 4. MPC with the model learned through DMD. Very naive implementation, the symbolic feature expansion limits the speed of solution. There are better ways to include the nonlinear objective function into koopman feature.  
 5. MPC with Runge Kutta 4th order simulation on ground-truth ode. This approach can't let the gym rendering in real time.  
+6. The variational GPR is not suitable for inverse dynamics learning. Because there is no obvious hidden structure of this dynamic system.  
