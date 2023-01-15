@@ -185,7 +185,7 @@ class MLPDMDc:
                     break
             
         # start plotting
-        vali_fig = plt.figure(figsize=[13,9])
+        vali_fig = plt.figure(figsize=[10,7])
         for i in range(9):
             plt.subplot(int("33{}".format(i+1)))
             pred_traj = predict_trajs[i]
@@ -224,7 +224,7 @@ class MLPDMDc:
 
         V = th.transpose(Yl_, 0, 1) @ th.cat([Xl_, U], dim=1) # Yl:(l,xl_dim) -> (xl_dim, xl_dim + u_dim)
         
-        M = V @ th.pinverse(G_)
+        M = V @ th.linalg.pinv(G_)
 
         A, B = M[:, :(Xl.shape[1]+X.shape[1])], M[:, (Xl.shape[1]+X.shape[1]):]
         return A, B
@@ -279,7 +279,7 @@ if __name__ == "__main__":
     matrices_dataset_vali = data.DataLoader(dataset=dataset1v, batch_size=1, shuffle=False)
     triplet_dataset_vali = data.DataLoader(dataset=dataset2v, batch_size=len(dataset2v), shuffle=True)
     
-    hyper = {"layer":4, "nodes":[2,5,10,20], "actfunc":["ReLU", "ReLU", None]}
+    hyper = {"layer":5, "nodes":[2,5,10,20,40], "actfunc":["ReLU", "ReLU", "ReLU", None]}
     
     mlpdmdc = MLPDMDc(hyper)
     mlpdmdc.fit(matrices_dataset, triplet_dataset, matrices_dataset_vali, triplet_dataset_vali, 2e-3, 1000, '/home/jiayun/Desktop/MY_ML/jylearn/timeseries/runs')
