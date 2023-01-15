@@ -9,6 +9,7 @@ th.set_printoptions(precision=2)
 ##  comments:
 ##              1. EM LSS will overfit when dim_x is large, or trained with small dataset
 ##              2. The initialization of parameters play a very important role for numerical stability!
+##                 When convergence problem happens, run the fit again may happens to start training with a good initialization.
 ##              3. Cholesky smoother can be implemented through tensor parallelisation to avoid computing cholesky factor of large sparse matrix
 ##
 
@@ -45,7 +46,7 @@ class LSS(object):
         self.LSS_Param = LSS_Param
         
     def fit(self, X, U):
-        optimizer = Adam(params=self.LSS_Param.parameters(), lr=1e-2)
+        optimizer = Adam(params=self.LSS_Param.parameters(), lr=2e-3)
         self.curr_loss = 0.
         
         dim_x = self.LSS_Param.A.shape[0]
@@ -54,7 +55,7 @@ class LSS(object):
             with th.no_grad():
                 X_filtered, X_smoothed, X_cov = LSS.cholesky_smoothing(self.LSS_Param, X, U) # calc the belief
 
-            for _ in range(120): # no need to centering, this number was hand tuned
+            for _ in range(100): # no need to centering, this number was hand tuned
                 optimizer.zero_grad()
                 objective = LSS.joint_likelihood(self.LSS_Param, dim_x, X_smoothed, X, U)
                 objective.backward()
@@ -73,6 +74,7 @@ class LSS(object):
             
             X_filtered = X_filtered.reshape(-1, dim_x)
             X_filtered = th.einsum("ij,lj->li", self.LSS_Param.C, X_filtered)
+
         return X_filtered, Y_smoothed, X_cov
     
     def predict(self, x):
@@ -172,8 +174,8 @@ if __name__ == "__main__":
         A[1,1] *= 0.5
         
         ## we need to trade off model dimension and data number!
-        time_step = 300
-        t = th.linspace(0, 20, time_step)
+        time_step = 400
+        t = th.linspace(0, 25, time_step)
         U = (th.sin(2*t) + th.sin(0.5*t) + th.cos(t) + th.cos(0.5*t)).unsqueeze(dim=1) * 0.1
         x0 = th.tensor([[0.], [0.]])
         X = th.zeros(time_step+1,2)
@@ -195,11 +197,9 @@ if __name__ == "__main__":
     X_filtered, X_smoothed, X_cov = lss.fit(X, U)
 
     X_smoothed = X_smoothed.detach().numpy()
-    # print(X_smoothed)
     X_smoothed = X_smoothed.reshape(-1, 2)
     
     X_filtered = X_filtered.detach().numpy()
-    # print(X_smoothed)
     X_filtered = X_filtered.reshape(-1, 2)
             
     plt.subplot(211)
