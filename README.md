@@ -4,7 +4,9 @@ The gym **pendulum** environment is chosen to be the benchmark of control projec
   
   
 Update:  
-08.01.2021 the numerical koopman DMDc with fixed lifting function and neural networks were implemented.
+15.01.2023 add linear state space model training with EM algorithm.
+
+08.01.2023 the numerical koopman DMDc with fixed lifting function and neural networks were implemented.
 
 31.11.2022, the kernel classes enabling the kernel operations (add, multiply and exponent) has been finished. Exact GPR and variational EM sparse GPR were implemented.
 
