@@ -4,7 +4,7 @@ The gym **pendulum** environment is chosen to be the benchmark of control projec
   
   
 Update:  
-15.01.2023 add linear state space model training with EM algorithm.
+15.01.2023 add linear state space model learning with EM algorithm.
 
 08.01.2023 the numerical koopman DMDc with fixed lifting function and neural networks were implemented.
 
