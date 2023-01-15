@@ -9,6 +9,7 @@ th.set_printoptions(precision=2)
 ##  comments:
 ##              1. EM LSS will overfit when dim_x is large, or trained with small dataset
 ##              2. The initialization of parameters play a very important role for numerical stability!
+##              3. Cholesky smoother can be implemented through tensor parallelisation to avoid computing cholesky factor of large sparse matrix
 ##
 
 class LSS_Param(nn.Module):
@@ -38,12 +39,11 @@ class LSS_Param(nn.Module):
 
 class LSS(object):
     ''' learning linear state space model by em algorithm
-        Implementation by pytorch;
+        Implemented with pytorch;
     '''
     def __init__(self, LSS_Param):
         self.LSS_Param = LSS_Param
         
-    
     def fit(self, X, U):
         optimizer = Adam(params=self.LSS_Param.parameters(), lr=1e-2)
         self.curr_loss = 0.
@@ -53,14 +53,13 @@ class LSS(object):
         while True:
             with th.no_grad():
                 X_filtered, X_smoothed, X_cov = LSS.cholesky_smoothing(self.LSS_Param, X, U) # calc the belief
-            innerloop_history = [float("inf")]
-            for _ in range(120): # no need to centering
+
+            for _ in range(120): # no need to centering, this number was hand tuned
                 optimizer.zero_grad()
                 objective = LSS.joint_likelihood(self.LSS_Param, dim_x, X_smoothed, X, U)
                 objective.backward()
                 optimizer.step()
                 self.curr_loss = objective.item()
-                innerloop_history.append(self.curr_loss)
 
             print("Current ELBO: ", self.curr_loss)
             outloop_history.append(self.curr_loss)
@@ -84,7 +83,7 @@ class LSS(object):
     
     @staticmethod
     def cholesky_smoothing(LSS_Param, X, U):
-        ### check
+        ### check step 1
         x0_prior = LSS_Param.x0_prior
         v = th.einsum("ij,bj->bi", LSS_Param.B, U).reshape(-1,1)
         z = th.cat([x0_prior.reshape(-1,1), v, X.reshape(-1,1)], dim=0)
@@ -92,7 +91,7 @@ class LSS(object):
         
         length, x_dim = len(X), LSS_Param.A.shape[0]
         
-        ### check
+        ### check step 2
         H1 = th.eye(length * x_dim)
         H2_temp1 = th.block_diag(*[-LSS_Param.A]*(length-1))
         H2_temp2 = th.cat([th.zeros(x_dim, x_dim*(length-1)), H2_temp1], dim=0)
@@ -101,7 +100,7 @@ class LSS(object):
         H = th.cat([H1 + H2, H3], dim=0)
         ###
         
-        ### check
+        ### check step 3
         P0_prior_precision = th.exp(LSS_Param.P0_prior)
         Gamma_precision = th.exp(LSS_Param.Gamma)
         K_precision = th.exp(LSS_Param.K)
@@ -123,10 +122,13 @@ class LSS(object):
     @staticmethod
     def joint_likelihood(lss_param, dim_x, X_smoothed, X_obs, U):
         # X = [x0,x1,x2,x3,...,xK]
+        # The exact log likelihood was derived to avoid using the pytorch distribution class,
+        # the compute time can thus largely reduced.
+        
         X_smoothed = X_smoothed.reshape(-1, dim_x)
         nll = 0
         
-        ### check
+        ### check step 1
         mean_1 = lss_param.x0_prior.T
         P0_prior_precision = th.exp(lss_param.P0_prior)
         
@@ -137,7 +139,7 @@ class LSS(object):
         # because the magnitude of initial state loss will generally len(X_smoothed) times smaller than other 2 terms
         ###
         
-        ### check
+        ### check step 2
         mean_2_ = th.einsum("ij,lj->li", lss_param.A, X_smoothed[:-1])
         mean_2 = mean_2_ + th.einsum("ij,lj->li", lss_param.B, U)
         Gamma_precision = th.exp(lss_param.Gamma)
@@ -148,7 +150,7 @@ class LSS(object):
         nll -= temp4.sum()
         ###
         
-        ### check
+        ### check step 3
         mean_3 = th.einsum("ij,lj->li", lss_param.C, X_smoothed)
         K_precision = th.exp(lss_param.K)
 
