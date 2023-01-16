@@ -1,18 +1,21 @@
 import torch as th
 import torch.nn as nn
-from torch.optim import Adam
+from torch.optim import AdamW
 import numpy as np
-th.set_printoptions(precision=2)
+th.set_printoptions(precision=3)
 
 
 ##
 ##  comments:
 ##              1. EM LSS will overfit when dim_x is large, or trained with small dataset
 ##              2. The initialization of parameters play a very important role for numerical stability!
-##                 When convergence problem happens, run the fit again may happens to start training with a good initialization.
+##                 When convergence problem or bad result happens, run fit again may happens to start training with a good initialization.
 ##              3. Cholesky smoother can be implemented through tensor parallelisation to avoid computing cholesky factor of large sparse matrix
+##              4. If you saw the smoothing result is a fold-line connecting the observation points, 
+##                 which means the smoother was totally not trusting learned dynamic model.
 ##
 
+## TODO: evaluate the smoothing variance ?
 class LSS_Param(nn.Module):
     def __init__(self, dim_x, dim_u, dim_obs):
         super().__init__()
@@ -46,7 +49,7 @@ class LSS(object):
         self.LSS_Param = LSS_Param
         
     def fit(self, X, U):
-        optimizer = Adam(params=self.LSS_Param.parameters(), lr=2e-3)
+        optimizer = AdamW(params=self.LSS_Param.parameters(), lr=7e-3)
         self.curr_loss = 0.
         
         dim_x = self.LSS_Param.A.shape[0]
@@ -54,34 +57,31 @@ class LSS(object):
         while True:
             with th.no_grad():
                 X_filtered, X_smoothed, X_cov = LSS.cholesky_smoothing(self.LSS_Param, X, U) # calc the belief
-
             for _ in range(100): # no need to centering, this number was hand tuned
                 optimizer.zero_grad()
                 objective = LSS.joint_likelihood(self.LSS_Param, dim_x, X_smoothed, X, U)
                 objective.backward()
                 optimizer.step()
                 self.curr_loss = objective.item()
-
             print("Current ELBO: ", self.curr_loss)
             outloop_history.append(self.curr_loss)
             if outloop_history[-2] - outloop_history[-1] <= 1e-4:
                 break
         with th.no_grad():
-            X_cov = th.diag(X_cov)
-            X_cov = X_cov.reshape(-1, dim_x)
+            X_var = th.diag(X_cov)
+            X_var = 1 / X_var.reshape(-1, dim_x)
+            X_var = th.diag_embed(X_var) # (l,x,x)
+            Y_var_temp = th.einsum("ij,ljk->lik", self.LSS_Param.C, X_var)
+            Y_var = th.einsum("lik,kn->lin", Y_var_temp, self.LSS_Param.C.T) + self.LSS_Param.K.unsqueeze(dim=0)
+            Y_var = th.diagonal(Y_var, dim1=1, dim2=2)
+
             X_smoothed = X_smoothed.reshape(-1, dim_x)
             Y_smoothed = th.einsum("ij,lj->li", self.LSS_Param.C, X_smoothed)
             
             X_filtered = X_filtered.reshape(-1, dim_x)
             X_filtered = th.einsum("ij,lj->li", self.LSS_Param.C, X_filtered)
 
-        return X_filtered, Y_smoothed, X_cov
-    
-    def predict(self, x):
-        pass
-    
-    def traj_predict(self, x, U):
-        pass
+        return X_filtered, Y_smoothed, Y_var
     
     @staticmethod
     def cholesky_smoothing(LSS_Param, X, U):
@@ -112,8 +112,10 @@ class LSS(object):
         Winv = th.block_diag(*W_diag_list)
         ### 
         cholesky_term = H.T @ Winv @ H
-
-        cho_Low = th.linalg.cholesky(cholesky_term)
+        try:
+            cho_Low = th.linalg.cholesky(cholesky_term)
+        except:
+            raise ValueError("Please try to train it again, we met bad initial parameters...")
 
         rhs_term = H.T @ Winv @ z
         
@@ -161,58 +163,47 @@ class LSS(object):
         temp6 = 0.5 * th.log(th.prod(K_precision)) - 0.5 * th.norm(temp5, dim=1, keepdim=True) ** 2.
         nll -= temp6.sum()
         ###
+
         return nll
     
 if __name__ == "__main__":
-    ### Toy example A = diag([0.2,0.7]) B = [[0.5],[1]], process_noise = N(0, diag([0.03, 0.03]))###
     import matplotlib.pyplot as plt
-
-    with th.no_grad():
-        A, B = th.eye(2), th.tensor([[0.5],[1]])
-        A[0,0] *= 0.7
-        A[0,1] += -0.4
-        A[1,1] *= 0.5
-        
-        ## we need to trade off model dimension and data number!
-        time_step = 400
-        t = th.linspace(0, 25, time_step)
-        U = (th.sin(2*t) + th.sin(0.5*t) + th.cos(t) + th.cos(0.5*t)).unsqueeze(dim=1) * 0.1
-        x0 = th.tensor([[0.], [0.]])
-        X = th.zeros(time_step+1,2)
-        gt_res = th.zeros(time_step+1,2)
-        X[0,:] = (x0 + th.randn(2,1)*0.05).squeeze()
-        gt_res[0,:] = x0.squeeze()
-        step = 0
-        # C = I
-        for u in U:
-            step += 1
-            x0 = A@x0 + B@u.unsqueeze(dim=1) # add process noise
-            X[step,:] = (x0 + th.randn(2,1)*0.05).squeeze()
-            gt_res[step,:] = x0.squeeze()
+    from jycontrol.system import Pendulum
+    from jylearn.timeseries.utils import collect_rollouts
+    
+    p = Pendulum()
+    X_l, U_l = collect_rollouts(p, 1, 200)
+    X, U = X_l[0], U_l[0]
+    X_noise, U = th.from_numpy(X + 2/np.max(X)*np.random.randn(*X.shape)).float(), th.from_numpy(U_l[0]).float()
             
-    lss_param = LSS_Param(dim_x=3, dim_u=1, dim_obs=2)
-    
+    lss_param = LSS_Param(dim_x=6, dim_u=1, dim_obs=2)
     lss = LSS(LSS_Param=lss_param)
-    
-    X_filtered, X_smoothed, X_cov = lss.fit(X, U)
+    X_filtered, X_smoothed, variance = lss.fit(X_noise, U)
+
 
     X_smoothed = X_smoothed.detach().numpy()
     X_smoothed = X_smoothed.reshape(-1, 2)
     
     X_filtered = X_filtered.detach().numpy()
     X_filtered = X_filtered.reshape(-1, 2)
+    
+    variance = variance.detach().numpy()
             
     plt.subplot(211)
-    plt.plot(X[:,0], ".r", label="observation")
-    plt.plot(gt_res[:,0], "-b", label="gt")
+    plt.plot(X_noise[:,0], ".r", label="observation")
+    plt.plot(X[:,0], "-b", label="gt")
     plt.plot(X_smoothed[:,0], "-c", label="smoothed")
-    # plt.plot(X_filtered[:,0], "-k", label="filtered")
+    plt.plot(X_smoothed[:,0]+variance[:,0], "-.c")
+    plt.plot(X_smoothed[:,0]-variance[:,0], "-.c", label="variance")
+
     plt.grid()
     plt.subplot(212)
-    plt.plot(X[:,1], ".r", label="observation")
-    plt.plot(gt_res[:,1], "-b", label="gt")
+    plt.plot(X_noise[:,1], ".r", label="observation")
+    plt.plot(X[:,1], "-b", label="gt")
     plt.plot(X_smoothed[:,1], "-c", label="smoothed")
-    # plt.plot(X_filtered[:,1], "-k", label="filtered")
+    plt.plot(X_smoothed[:,1]+variance[:,1], "-.c")
+    plt.plot(X_smoothed[:,1]-variance[:,1], "-.c", label="variance")
+
     plt.grid()
     plt.legend()
     plt.show()
