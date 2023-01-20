@@ -1,9 +1,8 @@
 import torch as th
 import torch.nn as nn
-from torch.optim import AdamW
+from torch.optim import Adam
 import numpy as np
 th.set_printoptions(precision=3)
-
 
 ##
 ##  comments:
@@ -16,14 +15,21 @@ th.set_printoptions(precision=3)
 ##
 
 ## TODO: evaluate the smoothing variance ?
+
+def extract_diag_block(X_cov, dim_x):
+    container = th.zeros(X_cov.shape[0]//dim_x, dim_x, dim_x)
+    for i in range(X_cov.shape[0]//dim_x):
+        container[i,:,:] = th.linalg.inv(X_cov[i*dim_x:(i+1)*dim_x, i*dim_x:(i+1)*dim_x])
+    return container
+    
 class LSS_Param(nn.Module):
     def __init__(self, dim_x, dim_u, dim_obs):
         super().__init__()
         ## give it a reasonable initialization ##
         
-        A = th.randn(dim_x, dim_x)*1e-4 + th.eye(dim_x)
-        B = th.randn(dim_x, dim_u)*1e-4
-        C = th.randn(dim_obs, dim_x)*1e-4
+        A = th.randn(dim_x, dim_x)*1e-5 + th.eye(dim_x)
+        B = th.randn(dim_x, dim_u)*1e-5
+        C = th.randn(dim_obs, dim_x)*1e-5
         
         Gamma_L = th.abs(th.randn(dim_x)) * 5
         K_L = th.abs(th.randn(dim_obs)) * 5
@@ -49,12 +55,12 @@ class LSS(object):
         self.LSS_Param = LSS_Param
         
     def fit(self, X, U):
-        optimizer = AdamW(params=self.LSS_Param.parameters(), lr=7e-3)
+        optimizer = Adam(params=self.LSS_Param.parameters(), lr=5e-3)
         self.curr_loss = 0.
         
         dim_x = self.LSS_Param.A.shape[0]
         outloop_history = [float("inf")]
-        while True:
+        for _ in range(50):
             with th.no_grad():
                 X_filtered, X_smoothed, X_cov = LSS.cholesky_smoothing(self.LSS_Param, X, U) # calc the belief
             for _ in range(100): # no need to centering, this number was hand tuned
@@ -65,12 +71,9 @@ class LSS(object):
                 self.curr_loss = objective.item()
             print("Current ELBO: ", self.curr_loss)
             outloop_history.append(self.curr_loss)
-            if outloop_history[-2] - outloop_history[-1] <= 1e-4:
-                break
+
         with th.no_grad():
-            X_var = th.diag(X_cov)
-            X_var = 1 / X_var.reshape(-1, dim_x)
-            X_var = th.diag_embed(X_var) # (l,x,x)
+            X_var = extract_diag_block(X_cov, dim_x)
             Y_var_temp = th.einsum("ij,ljk->lik", self.LSS_Param.C, X_var)
             Y_var = th.einsum("lik,kn->lin", Y_var_temp, self.LSS_Param.C.T) + self.LSS_Param.K.unsqueeze(dim=0)
             Y_var = th.diagonal(Y_var, dim1=1, dim2=2)
@@ -121,6 +124,7 @@ class LSS(object):
         
         X_filtered = th.linalg.solve_triangular(cho_Low, rhs_term, upper=False)
         X_smoothed = th.linalg.solve_triangular(cho_Low.T, X_filtered, upper=True)
+
         return X_filtered, X_smoothed, cholesky_term # (mean, covariance)
     
     @staticmethod
@@ -176,7 +180,7 @@ if __name__ == "__main__":
     X, U = X_l[0], U_l[0]
     X_noise, U = th.from_numpy(X + 2/np.max(X)*np.random.randn(*X.shape)).float(), th.from_numpy(U_l[0]).float()
             
-    lss_param = LSS_Param(dim_x=6, dim_u=1, dim_obs=2)
+    lss_param = LSS_Param(dim_x=4, dim_u=1, dim_obs=2)
     lss = LSS(LSS_Param=lss_param)
     X_filtered, X_smoothed, variance = lss.fit(X_noise, U)
 
