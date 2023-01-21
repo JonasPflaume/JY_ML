@@ -105,6 +105,7 @@ class PKA(object):
             # implicit state space model
             traj_Xb_lift = self.lifting_func(traj_Xb)
             A, B, C = self.get_state_space_model(traj_Xb, traj_Ub, traj_Xb_lift, padding)
+
             
             # estimate belief through batch smoothing
             with th.no_grad():
@@ -118,7 +119,8 @@ class PKA(object):
                 objective.backward()
                 optimizer.step()
                 
-                # in order to keep A, B, C up to date, we calc them iteratively
+                # in order to keep A, B, C up to date, we calc them iteratively, note this step is quite cheap.
+                traj_Xb_lift = self.lifting_func(traj_Xb)
                 A, B, C = self.get_state_space_model(traj_Xb, traj_Ub, traj_Xb_lift)
                 epoch_loss += objective.item()
             epoch_loss /= update_num
@@ -168,18 +170,17 @@ class PKA(object):
         V_term1 = V_term1_.unsqueeze(dim=2)
         V_term2_ = th.cat([mb_lift, traj_Ub], dim=2).flatten(start_dim=0, end_dim=1)
         V_term2 = V_term2_.unsqueeze(dim=2)
-        V_ = th.einsum("bik,bjk->bij", V_term1, V_term2)
-        V = th.sum(V_, dim=0)
+        V = th.einsum("bik,bjk->ij", V_term1, V_term2)
         
         ## batch outer product to get G
-        G_term1 = th.einsum("bik,bjk->bij", V_term2, V_term2)
+        G_term1 = th.einsum("bik,bjk->ij", V_term2, V_term2)
         # concatenate data
         G_term2_1 = Sb_lift.flatten(start_dim=0, end_dim=1)
         G_term2_2 = 1 / th.exp(G_term2_1) # mark: output of network is - log precision matrix
-        G_term2_3 = th.diag_embed(G_term2_2)
-        
-        G_term2 = padding(G_term2_3)
-        G = (G_term1 + G_term2).sum(dim=0)
+        G_term2_3 = th.sum(G_term2_2, dim=0)
+        G_term2_4 = th.diag(G_term2_3)
+        G_term2 = padding(G_term2_4)
+        G = G_term1 + G_term2
         AB = V @ th.linalg.pinv(G)
         A, B = AB[:,:dim_xl], AB[:,dim_xl:]
         
@@ -189,16 +190,15 @@ class PKA(object):
         
         F_term2_ = traj_Xb_lift[:,:,:dim_xl].flatten(start_dim=0, end_dim=1)   # \mu(x_t)
         F_term2 = F_term2_.unsqueeze(dim=2)
-        F_ = th.einsum("bik,bjk->bij", F_term1, F_term2)
-        F = F_.sum(dim=0)
+        F = th.einsum("bik,bjk->ij", F_term1, F_term2)
         
-        L_term1 = th.einsum("bik,bjk->bij", F_term2, F_term2)
+        L_term1 = th.einsum("bik,bjk->ij", F_term2, F_term2)
         Sb_lift_whole = traj_Xb_lift[:,:,dim_xl:].flatten(start_dim=0, end_dim=1)
         L_term2_ = 1 / th.exp(Sb_lift_whole)
-        L_term2 = th.diag_embed(L_term2_)
-        L = (L_term1 + L_term2).sum(dim=0)
-        C = F @ th.linalg.pinv(L)
+        L_term2 = th.diag(L_term2_.sum(dim=0))
 
+        L = L_term1 + L_term2
+        C = F @ th.linalg.pinv(L)
         return A, B, C
     
     @staticmethod
@@ -224,11 +224,11 @@ if __name__ == "__main__":
     from jycontrol.system import Pendulum
     
     p = Pendulum()
-    X_l, U_l = collect_rollouts(p, 100, 150)
+    X_l, U_l = collect_rollouts(p, 500, 150)
     X_lv, U_lv = collect_rollouts(p, 10, 150)
     
     trainDataset = pkaDataset(X_list=X_l, U_list=U_l)
-    trainSet = data.DataLoader(dataset=trainDataset, batch_size=50, shuffle=True)
+    trainSet = data.DataLoader(dataset=trainDataset, batch_size=500, shuffle=True)
     
     valiDataset = pkaDataset(X_list=X_lv, U_list=U_lv)
     valiSet = data.DataLoader(dataset=valiDataset, batch_size=1, shuffle=False)
