@@ -6,6 +6,7 @@ from torch.utils import data
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 import matplotlib.pyplot as plt
+from numba import njit
 
 from jylearn.parametric.mlp import MLP
 from jylearn.timeseries.utils import collect_rollouts
@@ -83,7 +84,7 @@ class PKA(object):
         ext_param = PKA.setParams(self.external_param, 0.)
         
         optimizer = SGD(net_param + ext_param, lr=lr, momentum=0.9)
-        scheduler = ExponentialLR(optimizer, gamma=0.95)
+        scheduler = ExponentialLR(optimizer, gamma=0.9)
         writer = SummaryWriter(logging_dir)
         
         whole_train_set = iter(train_dataset)
@@ -93,6 +94,8 @@ class PKA(object):
 
         # dim_x = self.net_hyper_param["nodes"][-1] // 2
         dim_u = traj_Ub.shape[2]
+        traj_length = traj_Xb.shape[1]
+        batch_num = traj_Xb.shape[0]
         # initialize a padding layer, used in state_space_model fitting.
         padding = nn.ZeroPad2d((0, dim_u, 0, dim_u)) # (left, right, top, bottom)
         
@@ -108,14 +111,22 @@ class PKA(object):
 
             
             # estimate belief through batch smoothing
+            assert traj_length - min_subsample_len >= 0, "You should reduce the min_subsample_len smaller than trajectory length."
+            start_end_index = th.randint(traj_length - min_subsample_len, size=(1,))
+            start_end_index = th.cat([start_end_index, start_end_index + min_subsample_len])
+            
+            # batch_num is denoted as the number of batch smoothing traj
             with th.no_grad():
-                traj_Xb_lift_smoothed, Xb_cov = PKA.batch_discrete_smoothing(self.external_param, A, B, C, traj_Xb_lift, traj_Ub)
+                # TODO I'm working on this smoothing function
+                traj_Xb_lift_smoothed, Xb_cov = PKA.batch_discrete_smoothing(self.external_param,
+                                                                             A, B, C,
+                                                                             traj_Xb, traj_Xb_lift, traj_Ub, start_end_index)
                 
             # inner loop, update parameters by SGD
-            update_num = 10
-            for _ in range(update_num):
+            # TODO here, modify the SGD sampling strategy !
+            for _ in range(batch_num):
                 optimizer.zero_grad()
-                objective = PKA.log_likelihood_loss(self.external_param, A, B, C, traj_Xb_lift_smoothed, traj_Xb, traj_Ub)
+                objective = PKA.log_likelihood_loss(self.external_param, A, B, C, traj_Xb_lift_smoothed, traj_Xb, traj_Ub, start_end_index)
                 objective.backward()
                 optimizer.step()
                 
@@ -123,9 +134,10 @@ class PKA(object):
                 traj_Xb_lift = self.lifting_func(traj_Xb)
                 A, B, C = self.get_state_space_model(traj_Xb, traj_Ub, traj_Xb_lift)
                 epoch_loss += objective.item()
-            epoch_loss /= update_num
-            # run learning rate decay
-            scheduler.step()
+                # run learning rate decay
+                scheduler.step()
+                
+            epoch_loss /= batch_num
             
             writer.add_scalar("training loss (ELBO)", epoch_loss, global_step= epoch + 1)
 
@@ -133,6 +145,9 @@ class PKA(object):
                 vali_loss, vali_fig = self.validate(vali_dataset)
             writer.add_figure("forward prediction", vali_fig, global_step= epoch + 1)
             writer.add_scalar("validation loss", vali_loss, global_step= epoch + 1)
+            
+            # reinitialize lr scheduler
+            scheduler = ExponentialLR(optimizer, gamma=0.9)
                 
     def validate(self,):
         self.lifting_func.eval()
@@ -146,8 +161,107 @@ class PKA(object):
         pass
     
     @staticmethod
-    def batch_discrete_smoothing():
-        pass
+    def batch_discrete_smoothing(
+            external_param: ExternalParams,
+            A: th.Tensor,
+            B: th.Tensor,
+            C: th.Tensor,
+            traj_Xb: th.Tensor,
+            traj_Xb_lift: th.Tensor,
+            traj_Ub: th.Tensor,
+            start_end_index: th.Tensor):
+        ''' We have to use the discrete information form to avoid running out of memory.
+            Comment1:   use numba to accelerate the for loop is meaningless, because its virtue will be demolished due to
+                        paralell computing.
+        
+            traj_Xb_lift:   (b,l,2*dim_xl)
+            traj_Xb:        (b,l,dim_xl)
+            traj_Ub:        (b,l-1,dim_u)
+            A, B, C:        (dim_xl,dim_xl), (dim_xl,dim_u), (dim_x,dim_xl)
+            start_end_index:(2,)
+            
+            return:
+                covariance is composed of L_k, L_{k,k-1}, SER book equation (3.60)
+        '''
+        batch_num = traj_Xb.shape[0]
+        dim_x = C.shape[0]
+        dim_xl, dim_u = B.shape
+        traj_length = start_end_index[1] - start_end_index[0]
+        
+        Gamma_precision, K_precision = th.exp(external_param.Gamma), th.exp(external_param.K)
+        
+        Y = traj_Xb[:,start_end_index[0]:start_end_index[1], :]
+        U = traj_Ub[:,start_end_index[0]:start_end_index[1]-1, :]
+        
+        x0_prior = traj_Xb_lift[:, start_end_index[0], :dim_xl]
+        y0 = Y[:, 0, :] # (b, dim_x)
+        P0_precision_prior = th.exp(traj_Xb_lift[:, start_end_index[0], dim_xl:])
+        C_t_K_inv_C = th.einsum("ij,jk->ik", C.T, th.einsum("i,ik->ik", K_precision, C))
+        A_t_Gamma_inv_A = th.einsum("ij,jk->ik", A.T, th.einsum("i,ik->ik", Gamma_precision, A))
+        Gamma_inv_A = th.einsum("i,ik->ik", Gamma_precision, A)
+        I0 = th.diag_embed(P0_precision_prior) + C_t_K_inv_C.unsqueeze(dim=0) # (b, dim_xl, dim_xl)
+        q0 = th.einsum("bi,bi->bi", P0_precision_prior, x0_prior) + th.einsum("ij,bj->bi", C.T, th.einsum("i,bi->bi", K_precision, y0))
+        
+        ## forward recursion ##
+        D_list = []
+        L_k_1_list = []
+        L_k_k_1_list = []
+        for i in range(traj_length-1):
+            # 3.66 a.
+            L_k_1_squre = I0 + A_t_Gamma_inv_A.unsqueeze(dim=0) # (b, dim_xl, dim_xl)
+            L_k_1 = th.linalg.cholesky(L_k_1_squre)
+            # 3.66 b.
+            vk = th.einsum("ij,bj->bi", B, U[:,i,:]) # (b, dim_xl)
+            rhs_3_66_b = q0 - th.einsum("ij,bj->bi", A.T, th.einsum("i,bi->bi", Gamma_precision, vk))
+            d_k_1 = th.linalg.solve_triangular(L_k_1, rhs_3_66_b.unsqueeze(dim=2), upper=False).squeeze(dim=2)
+            # 3.66 c.
+            rhs_3_66_c = - Gamma_inv_A.unsqueeze(dim=0).repeat(batch_num, 1, 1)
+            L_k_k_1 = th.linalg.solve_triangular(th.transpose(L_k_1, dim0=1, dim1=2), rhs_3_66_c, upper=True, left=False)
+            # 3.66 d.
+            I0 = - th.einsum("bij,bjk->bik", L_k_k_1, th.transpose(L_k_k_1, dim0=1, dim1=2)) \
+                 + th.diag( Gamma_precision ).unsqueeze(dim=0).repeat(batch_num, 1, 1) \
+                 + C_t_K_inv_C.unsqueeze(dim=0).repeat(batch_num, 1, 1)
+            # 3.66 e.
+            y0 = Y[:, i, :] # (b, dim_x)
+            q0 = - th.einsum("bij,bj->bi", L_k_k_1, d_k_1) \
+                 + th.einsum("i,bi->bi", Gamma_precision, vk) \
+                 + th.einsum("ij,bj->bi", C.T, th.einsum("i,bi->bi", K_precision, y0))
+                 
+            D_list.append(d_k_1.clone())
+            L_k_1_list.append(L_k_1.clone())
+            L_k_k_1_list.append(L_k_k_1.clone())
+        # last terms
+        # 3.61 g.
+        L_K_squre = I0 # (b, dim_xl, dim_xl)
+        L_K = th.linalg.cholesky(L_K_squre)
+        L_k_1_list.append(L_K.clone())
+        # 3.63 d.
+        d_K = th.linalg.solve_triangular(L_K, q0.unsqueeze(dim=2), upper=False).squeeze(dim=2)
+        
+        ## backward recursion ##
+        # initialized x_K_pos
+        x_K = th.einsum("bij,bj->bi", th.transpose(th.linalg.inv(L_K), dim0=1, dim1=2), d_K) # (b, dim_xl)
+        X_smoothed_list = [x_K.unsqueeze(dim=1).clone()]
+        for i in reversed( range(traj_length-1) ):
+            # 3.66 f.
+            L_k_1 = L_k_1_list[i]
+            L_k_k_1 = L_k_k_1_list[i] # (b, dim_xl, dim_xl)
+            d_k_1 = D_list[i] # (b, dim_xl)
+            rhs_3_66_f = - th.einsum("bij,bj->bi", th.transpose(L_k_k_1, dim0=1, dim1=2), x_K) + d_k_1
+            
+            x_K = th.linalg.solve_triangular(th.transpose(L_k_1, dim0=1, dim1=2), rhs_3_66_f.unsqueeze(dim=2), upper=True).squeeze(dim=2)
+            X_smoothed_list.append(x_K.unsqueeze(dim=1).clone())
+            X_smoothed_list.reverse()
+        X_smoothed = th.cat(X_smoothed_list, dim=1)
+        
+        cov0 = th.einsum("bij,bkj->bik", L_k_1_list[0], L_k_1_list[0]) # (b, dim_xl, dim_xl)
+        variance_list = [th.diagonal(cov0, dim1=1, dim2=2).unsqueeze(dim=1).clone()]
+
+        for i in range( 1, traj_length ):
+            cov0 = th.einsum("bij,bkj->bik", L_k_1_list[i], L_k_1_list[i]) + th.einsum("bij,bkj->bik", L_k_k_1_list[i-1], L_k_k_1_list[i-1])
+            variance_list.append(th.diagonal(cov0, dim1=1, dim2=2).unsqueeze(dim=1).clone())
+        variance = th.cat(variance_list, dim=1) # (b, l, dim_xl)
+        return X_smoothed, variance
     
     @staticmethod
     def get_state_space_model(traj_Xb, traj_Ub, traj_Xb_lift, padding):
@@ -199,6 +313,7 @@ class PKA(object):
 
         L = L_term1 + L_term2
         C = F @ th.linalg.pinv(L)
+
         return A, B, C
     
     @staticmethod
@@ -224,19 +339,19 @@ if __name__ == "__main__":
     from jycontrol.system import Pendulum
     
     p = Pendulum()
-    X_l, U_l = collect_rollouts(p, 500, 150)
+    X_l, U_l = collect_rollouts(p, 20, 150)
     X_lv, U_lv = collect_rollouts(p, 10, 150)
     
     trainDataset = pkaDataset(X_list=X_l, U_list=U_l)
-    trainSet = data.DataLoader(dataset=trainDataset, batch_size=500, shuffle=True)
+    trainSet = data.DataLoader(dataset=trainDataset, batch_size=20, shuffle=True)
     
     valiDataset = pkaDataset(X_list=X_lv, U_list=U_lv)
     valiSet = data.DataLoader(dataset=valiDataset, batch_size=1, shuffle=False)
     
-    dim_xl = 5
+    dim_xl = 10
     dim_obs = 2
     
     net_hyper = {"layer":4, "nodes":[dim_obs,5,10,2*dim_xl], "actfunc":["ReLU", "ReLU", None]}
     ext_param = ExternalParams(dim_xl, dim_obs)
     mlpdmdc = PKA(net_hyper, ext_param)
-    mlpdmdc.fit(trainSet, valiSet, lr=1e-3, epoch_num=1000, min_subsample_len=100, logging_dir='/home/jiayun/Desktop/MY_ML/jylearn/timeseries/runs')
+    mlpdmdc.fit(trainSet, valiSet, lr=1e-2, epoch_num=1000, min_subsample_len=100, logging_dir='/home/jiayun/Desktop/MY_ML/jylearn/timeseries/runs')

@@ -14,8 +14,6 @@ th.set_printoptions(precision=3)
 ##                 which means the smoother was totally not trusting learned dynamic model.
 ##
 
-## TODO: evaluate the smoothing variance ?
-
 def extract_diag_block(X_cov, dim_x):
     container = th.zeros(X_cov.shape[0]//dim_x, dim_x, dim_x)
     for i in range(X_cov.shape[0]//dim_x):
