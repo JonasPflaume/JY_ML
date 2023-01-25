@@ -8,25 +8,27 @@ import matplotlib.pyplot as plt
 
 from jylearn.parametric.mlp import MLP
 from jylearn.timeseries.utils import collect_rollouts
-from jylearn.timeseries.lss_em import extract_diag_block
 
 from tqdm import tqdm
 from collections import OrderedDict
 device = "cuda" if th.cuda.is_available() else "cpu"
 th.set_printoptions(precision=4)
-#
+
+##
 # Convention: When we need to express the second mode of a distribution in terms of torch parameters, we mean "log precision matrices".
-#
+##
 
 class ExternalParams(nn.Module):
     def __init__(self, dim_x, dim_obs):
         super().__init__()
         ## give it a reasonable initialization ##
-        Gamma_L = th.abs(th.randn(dim_x)) * 5
-        K_L = th.abs(th.randn(dim_obs)) * 5
+        Gamma_L = ( th.abs(th.randn(dim_x)) * 5).to(device).double()
+        K_L = (th.abs(th.randn(dim_obs)) * 5).to(device).double()
+        Gamma_L.requires_grad = True
+        K_L.requires_grad = True
 
-        self.Gamma = nn.parameter.Parameter(Gamma_L).to(device).double() # process noise    - log precision matrix
-        self.K = nn.parameter.Parameter(K_L).to(device).double()         # observation noise- log precision matrix
+        self.Gamma = nn.parameter.Parameter(Gamma_L) # process noise    - log precision matrix
+        self.K = nn.parameter.Parameter(K_L)         # observation noise- log precision matrix
         
     def __repr__(self):
         return "Process precision matrix: {0}, Obervation precision matrix {1}".format(list(self.Gamma.shape), list(self.K.shape))
@@ -77,7 +79,8 @@ class PKA(object):
             min_subsample_len:  int,
             logging_dir:        str
             ):
-        
+        ''' Training the neural network.
+        '''
         net_param = PKA.setParams(self.lifting_func, 0.)
         ext_param = PKA.setParams(self.external_param, 0.)
         
@@ -130,7 +133,12 @@ class PKA(object):
                 epoch_loss += objective.item()
                 
             epoch_loss /= batch_num
-            print(epoch_loss)
+
+            # I think we need to re-initialize the optimizer.
+            net_param = PKA.setParams(self.lifting_func, 0.)
+            ext_param = PKA.setParams(self.external_param, 0.)
+
+            optimizer = Adam(net_param + ext_param, lr=lr)
             
             # writer.add_scalar("training loss (ELBO)", epoch_loss, global_step= epoch + 1)
 
@@ -152,24 +160,21 @@ class PKA(object):
     
     @staticmethod
     def batch_discrete_smoothing(
-            external_param: ExternalParams,
-            A: th.Tensor,
-            B: th.Tensor,
-            C: th.Tensor,
-            traj_Xb: th.Tensor,
-            traj_Xb_lift: th.Tensor,
-            traj_Ub: th.Tensor,
-            start_end_index: th.Tensor):
+            external_param:             ExternalParams, 
+            A:                          th.Tensor,          # (dim_xl,dim_xl)
+            B:                          th.Tensor,          # (dim_xl,dim_u) 
+            C:                          th.Tensor,          # (dim_x,dim_xl)
+            traj_Xb:                    th.Tensor,          # (b,l,dim_xl)
+            traj_Xb_lift:               th.Tensor,          # (b,l,2*dim_xl)
+            traj_Ub:                    th.Tensor,          # (b,l-1,dim_u)
+            start_end_index:            th.Tensor           # (2,)
+            ):
         ''' We have to use the discrete information form to avoid running out of memory.
+            The batch discrete smoothing was implemented through "information form" of Kalman filter + smoother.
+            Reference:  "State estimation for robotics." BARFOOT.
+            
             Comment1:   use numba to accelerate the for loop is meaningless, because its virtue will be demolished due to
                         paralell computing.
-        
-            traj_Xb_lift:   (b,l,2*dim_xl)
-            traj_Xb:        (b,l,dim_xl)
-            traj_Ub:        (b,l-1,dim_u)
-            A, B, C:        (dim_xl,dim_xl), (dim_xl,dim_u), (dim_x,dim_xl)
-            start_end_index:(2,)
-            
             return:
                 covariance is composed of L_k, L_{k,k-1}, SER book equation (3.60)
         '''
@@ -258,15 +263,17 @@ class PKA(object):
             cov0 = th.einsum("bij,bkj->bik", L_k_1_list[i], L_k_1_list[i]) + th.einsum("bij,bkj->bik", L_k_k_1_list[i-1], L_k_k_1_list[i-1])
             variance_list.append(th.diagonal(cov0, dim1=1, dim2=2).unsqueeze(dim=1).clone())
         variance = th.cat(variance_list, dim=1) # (b, l, dim_xl)
+
         return X_smoothed, variance
     
     @staticmethod
-    def get_state_space_model(traj_Xb, traj_Ub, traj_Xb_lift, padding):
-        ''' solve least squares problems to get A, B, C matrices
-            traj_Xb:        (b, l, dim_x)
-            traj_Ub:        (b, l-1, dim_u)
-            traj_Xb_lift:   (b, l, dim_xl + dim_sigma)
-            padding:        padding function
+    def get_state_space_model(
+            traj_Xb,                # (b, l, dim_x)
+            traj_Ub,                # (b, l-1, dim_u)
+            traj_Xb_lift,           # (b, l, dim_xl + dim_sigma)
+            padding                 # padding function
+            ):
+        ''' solve least squares problems to get A, B, C matrices      
         '''
         dim_xl = traj_Xb_lift.shape[2] // 2
         # dim_u = traj_Ub.shape[2]
@@ -326,7 +333,7 @@ class PKA(object):
                             batch_index:            th.Tensor,      # every update in SGD, we evaluate only one trajectory
                             ):
         ''' log likelihood loss
-            This function was written in a form to utilize the paralell computing of GPU, therefore, quite efficient to compute
+            This function was written in a form to utilize the parallel computing with GPU, therefore, quite efficient to compute
             the whole trajectory.
         '''
         dim_x, dim_xl = C.shape
@@ -352,7 +359,7 @@ class PKA(object):
         mean_2_ = th.einsum("ij,lj->li", A, X_smoothed[:-1])
         mean_2 = mean_2_ + th.einsum("ij,lj->li", B, U)
         Gamma_precision = th.exp(external_param.Gamma)
-        
+
         x_rvar = X_smoothed[1:] # random variable
         temp3 = th.einsum("j,lj->lj", th.sqrt(Gamma_precision), x_rvar - mean_2)
         temp4 = 0.5 * th.log(th.prod(Gamma_precision)) - 0.5 * th.norm(temp3, dim=1, keepdim=True) ** 2.
@@ -399,10 +406,10 @@ if __name__ == "__main__":
     valiDataset = pkaDataset(X_list=X_lv, U_list=U_lv)
     valiSet = data.DataLoader(dataset=valiDataset, batch_size=1, shuffle=False)
     
-    dim_xl = 20
+    dim_xl = 10
     dim_obs = 2
     
     net_hyper = {"layer":5, "nodes":[dim_obs,5,10,20,2*dim_xl], "actfunc":["ReLU", "ReLU", "ReLU", None]}
     ext_param = ExternalParams(dim_xl, dim_obs)
     mlpdmdc = PKA(net_hyper, ext_param)
-    mlpdmdc.fit(trainSet, valiSet, lr=1e-3, epoch_num=1000, min_subsample_len=150, logging_dir='/home/jiayun/Desktop/MY_ML/jylearn/timeseries/runs')
+    mlpdmdc.fit(trainSet, valiSet, lr=2e-3, epoch_num=1000, min_subsample_len=150, logging_dir='/home/jiayun/Desktop/MY_ML/jylearn/timeseries/runs')
