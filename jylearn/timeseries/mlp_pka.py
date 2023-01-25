@@ -1,12 +1,10 @@
 import torch as th
 import torch.nn as nn
-from torch.optim import SGD
-from torch.optim.lr_scheduler import ExponentialLR
+from torch.optim import Adam
 from torch.utils import data
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 import matplotlib.pyplot as plt
-from numba import njit
 
 from jylearn.parametric.mlp import MLP
 from jylearn.timeseries.utils import collect_rollouts
@@ -83,8 +81,7 @@ class PKA(object):
         net_param = PKA.setParams(self.lifting_func, 0.)
         ext_param = PKA.setParams(self.external_param, 0.)
         
-        optimizer = SGD(net_param + ext_param, lr=lr, momentum=0.9)
-        scheduler = ExponentialLR(optimizer, gamma=0.9)
+        optimizer = Adam(net_param + ext_param, lr=lr)
         writer = SummaryWriter(logging_dir)
         
         whole_train_set = iter(train_dataset)
@@ -117,37 +114,30 @@ class PKA(object):
             
             # batch_num is denoted as the number of batch smoothing traj
             with th.no_grad():
-                # TODO I'm working on this smoothing function
                 traj_Xb_lift_smoothed, Xb_cov = PKA.batch_discrete_smoothing(self.external_param,
                                                                              A, B, C,
                                                                              traj_Xb, traj_Xb_lift, traj_Ub, start_end_index)
                 
-            # inner loop, update parameters by SGD
-            # TODO here, modify the SGD sampling strategy !
-            for _ in range(batch_num):
+            # inner loop, update parameters
+            for batch_index in range(batch_num):
                 optimizer.zero_grad()
-                objective = PKA.log_likelihood_loss(self.external_param, A, B, C, traj_Xb_lift_smoothed, traj_Xb, traj_Ub, start_end_index)
+                objective = PKA.log_likelihood_loss(self.external_param, A, B, C, traj_Xb_lift_smoothed, traj_Xb_lift, traj_Xb, traj_Ub, start_end_index, batch_index)
                 objective.backward()
                 optimizer.step()
-                
                 # in order to keep A, B, C up to date, we calc them iteratively, note this step is quite cheap.
                 traj_Xb_lift = self.lifting_func(traj_Xb)
-                A, B, C = self.get_state_space_model(traj_Xb, traj_Ub, traj_Xb_lift)
+                A, B, C = self.get_state_space_model(traj_Xb, traj_Ub, traj_Xb_lift, padding)
                 epoch_loss += objective.item()
-                # run learning rate decay
-                scheduler.step()
                 
             epoch_loss /= batch_num
+            print(epoch_loss)
             
-            writer.add_scalar("training loss (ELBO)", epoch_loss, global_step= epoch + 1)
+            # writer.add_scalar("training loss (ELBO)", epoch_loss, global_step= epoch + 1)
 
-            with th.no_grad():
-                vali_loss, vali_fig = self.validate(vali_dataset)
-            writer.add_figure("forward prediction", vali_fig, global_step= epoch + 1)
-            writer.add_scalar("validation loss", vali_loss, global_step= epoch + 1)
-            
-            # reinitialize lr scheduler
-            scheduler = ExponentialLR(optimizer, gamma=0.9)
+            # with th.no_grad():
+            #     vali_loss, vali_fig = self.validate(vali_dataset)
+            # writer.add_figure("forward prediction", vali_fig, global_step= epoch + 1)
+            # writer.add_scalar("validation loss", vali_loss, global_step= epoch + 1)
                 
     def validate(self,):
         self.lifting_func.eval()
@@ -188,6 +178,7 @@ class PKA(object):
         dim_xl, dim_u = B.shape
         traj_length = start_end_index[1] - start_end_index[0]
         
+        ## parameters initialization checked
         Gamma_precision, K_precision = th.exp(external_param.Gamma), th.exp(external_param.K)
         
         Y = traj_Xb[:,start_end_index[0]:start_end_index[1], :]
@@ -195,34 +186,40 @@ class PKA(object):
         
         x0_prior = traj_Xb_lift[:, start_end_index[0], :dim_xl]
         y0 = Y[:, 0, :] # (b, dim_x)
-        P0_precision_prior = th.exp(traj_Xb_lift[:, start_end_index[0], dim_xl:])
+        P0_precision_prior = th.exp(traj_Xb_lift[:, start_end_index[0], dim_xl:]) # (b, dim_xl)
+        ##
+        
+        ## forward loop initialization checked
         C_t_K_inv_C = th.einsum("ij,jk->ik", C.T, th.einsum("i,ik->ik", K_precision, C))
         A_t_Gamma_inv_A = th.einsum("ij,jk->ik", A.T, th.einsum("i,ik->ik", Gamma_precision, A))
         Gamma_inv_A = th.einsum("i,ik->ik", Gamma_precision, A)
+        # 3.67 a.
         I0 = th.diag_embed(P0_precision_prior) + C_t_K_inv_C.unsqueeze(dim=0) # (b, dim_xl, dim_xl)
+        # 3.67 b.
         q0 = th.einsum("bi,bi->bi", P0_precision_prior, x0_prior) + th.einsum("ij,bj->bi", C.T, th.einsum("i,bi->bi", K_precision, y0))
+        ##
         
         ## forward recursion ##
         D_list = []
         L_k_1_list = []
         L_k_k_1_list = []
         for i in range(traj_length-1):
-            # 3.66 a.
+            # 3.66 a. # checked
             L_k_1_squre = I0 + A_t_Gamma_inv_A.unsqueeze(dim=0) # (b, dim_xl, dim_xl)
             L_k_1 = th.linalg.cholesky(L_k_1_squre)
-            # 3.66 b.
+            # 3.66 b. # checked
             vk = th.einsum("ij,bj->bi", B, U[:,i,:]) # (b, dim_xl)
-            rhs_3_66_b = q0 - th.einsum("ij,bj->bi", A.T, th.einsum("i,bi->bi", Gamma_precision, vk))
+            rhs_3_66_b = q0 - th.einsum("ij,bj->bi", A.T, th.einsum("i,bi->bi", Gamma_precision, vk)) # (b, dim_xl)
             d_k_1 = th.linalg.solve_triangular(L_k_1, rhs_3_66_b.unsqueeze(dim=2), upper=False).squeeze(dim=2)
-            # 3.66 c.
+            # 3.66 c. # checked
             rhs_3_66_c = - Gamma_inv_A.unsqueeze(dim=0).repeat(batch_num, 1, 1)
             L_k_k_1 = th.linalg.solve_triangular(th.transpose(L_k_1, dim0=1, dim1=2), rhs_3_66_c, upper=True, left=False)
-            # 3.66 d.
+            # 3.66 d. # checked
             I0 = - th.einsum("bij,bjk->bik", L_k_k_1, th.transpose(L_k_k_1, dim0=1, dim1=2)) \
                  + th.diag( Gamma_precision ).unsqueeze(dim=0).repeat(batch_num, 1, 1) \
                  + C_t_K_inv_C.unsqueeze(dim=0).repeat(batch_num, 1, 1)
-            # 3.66 e.
-            y0 = Y[:, i, :] # (b, dim_x)
+            # 3.66 e. # checked
+            y0 = Y[:, i+1, :] # (b, dim_x)
             q0 = - th.einsum("bij,bj->bi", L_k_k_1, d_k_1) \
                  + th.einsum("i,bi->bi", Gamma_precision, vk) \
                  + th.einsum("ij,bj->bi", C.T, th.einsum("i,bi->bi", K_precision, y0))
@@ -231,27 +228,27 @@ class PKA(object):
             L_k_1_list.append(L_k_1.clone())
             L_k_k_1_list.append(L_k_k_1.clone())
         # last terms
-        # 3.61 g.
+        # 3.61 g. # checked
         L_K_squre = I0 # (b, dim_xl, dim_xl)
         L_K = th.linalg.cholesky(L_K_squre)
         L_k_1_list.append(L_K.clone())
-        # 3.63 d.
+        # 3.63 d. # checked
         d_K = th.linalg.solve_triangular(L_K, q0.unsqueeze(dim=2), upper=False).squeeze(dim=2)
         
-        ## backward recursion ##
+        ## backward recursion ## # checked
         # initialized x_K_pos
         x_K = th.einsum("bij,bj->bi", th.transpose(th.linalg.inv(L_K), dim0=1, dim1=2), d_K) # (b, dim_xl)
         X_smoothed_list = [x_K.unsqueeze(dim=1).clone()]
         for i in reversed( range(traj_length-1) ):
             # 3.66 f.
-            L_k_1 = L_k_1_list[i]
+            L_k_1 = L_k_1_list[i] # (b, dim_xl, dim_xl)
             L_k_k_1 = L_k_k_1_list[i] # (b, dim_xl, dim_xl)
             d_k_1 = D_list[i] # (b, dim_xl)
-            rhs_3_66_f = - th.einsum("bij,bj->bi", th.transpose(L_k_k_1, dim0=1, dim1=2), x_K) + d_k_1
             
+            rhs_3_66_f = - th.einsum("bij,bj->bi", th.transpose(L_k_k_1, dim0=1, dim1=2), x_K) + d_k_1
             x_K = th.linalg.solve_triangular(th.transpose(L_k_1, dim0=1, dim1=2), rhs_3_66_f.unsqueeze(dim=2), upper=True).squeeze(dim=2)
-            X_smoothed_list.append(x_K.unsqueeze(dim=1).clone())
-            X_smoothed_list.reverse()
+            X_smoothed_list.append(x_K.unsqueeze(dim=1).clone() )
+        X_smoothed_list.reverse()
         X_smoothed = th.cat(X_smoothed_list, dim=1)
         
         cov0 = th.einsum("bij,bkj->bik", L_k_1_list[0], L_k_1_list[0]) # (b, dim_xl, dim_xl)
@@ -276,7 +273,7 @@ class PKA(object):
 
         ### get the A,B matrices, [A,B] = V @ pinv(G)
         mb_lift, mb_lift_delay = traj_Xb_lift[:,:-1,:dim_xl], traj_Xb_lift[:,1:,:dim_xl]        # mu
-        Sb_lift = traj_Xb_lift[:,:-1,dim_xl:]                                                   # Sigma
+        Sb_lift = traj_Xb_lift[:,:-1, dim_xl:]                                                  # Sigma
         
         ## batch outer product to get V
         # concatenate data
@@ -317,8 +314,62 @@ class PKA(object):
         return A, B, C
     
     @staticmethod
-    def log_likelihood_loss():
-        pass
+    def log_likelihood_loss(external_param:         ExternalParams, # external parameter class
+                            A:                      th.Tensor,      # A matrix 
+                            B:                      th.Tensor,      # B matrix
+                            C:                      th.Tensor,      # C matrix
+                            traj_Xb_lift_smoothed:  th.Tensor,      # belief state
+                            traj_Xb_lift:           th.Tensor,      # lifting states, this is used to extract prior state
+                            traj_Xb:                th.Tensor,      # observation
+                            traj_Ub:                th.Tensor,      # control
+                            start_end_index:        th.Tensor,      # two elements indicate the start and end index
+                            batch_index:            th.Tensor,      # every update in SGD, we evaluate only one trajectory
+                            ):
+        ''' log likelihood loss
+            This function was written in a form to utilize the paralell computing of GPU, therefore, quite efficient to compute
+            the whole trajectory.
+        '''
+        dim_x, dim_xl = C.shape
+        X_smoothed = traj_Xb_lift_smoothed[batch_index]
+        U = traj_Ub[batch_index, start_end_index[0]:start_end_index[1]-1, :]
+        X_obs = traj_Xb[batch_index, start_end_index[0]:start_end_index[1], :]
+        x0_prior = traj_Xb_lift[batch_index, start_end_index[0]:start_end_index[0]+1, :dim_xl]
+        P0_prior = traj_Xb_lift[batch_index, start_end_index[0], dim_xl:]
+        nll = 0
+        
+        ### check step 1
+        mean_1 = x0_prior
+        P0_prior_precision = th.exp(P0_prior)
+        
+        x0_rvar = X_smoothed[0].unsqueeze(dim=0) # random variable
+        temp1 = th.einsum("j,lj->lj", th.sqrt(P0_prior_precision), x0_rvar - mean_1)
+        temp2 = 0.5 * th.log(th.prod(P0_prior_precision)) - 0.5 * th.norm(temp1, dim=1, keepdim=True) ** 2.
+        nll -= temp2.sum()
+        # because the magnitude of initial state loss will generally len(X_smoothed) times smaller than other 2 terms
+        ###
+        
+        ### check step 2
+        mean_2_ = th.einsum("ij,lj->li", A, X_smoothed[:-1])
+        mean_2 = mean_2_ + th.einsum("ij,lj->li", B, U)
+        Gamma_precision = th.exp(external_param.Gamma)
+        
+        x_rvar = X_smoothed[1:] # random variable
+        temp3 = th.einsum("j,lj->lj", th.sqrt(Gamma_precision), x_rvar - mean_2)
+        temp4 = 0.5 * th.log(th.prod(Gamma_precision)) - 0.5 * th.norm(temp3, dim=1, keepdim=True) ** 2.
+        nll -= temp4.sum()
+        ###
+        
+        ### check step 3
+        mean_3 = th.einsum("ij,lj->li", C, X_smoothed)
+        K_precision = th.exp(external_param.K)
+
+        x_rvar_2 = X_obs # random variable
+        temp5 = th.einsum("j,lj->lj", th.sqrt(K_precision), x_rvar_2 - mean_3)
+        temp6 = 0.5 * th.log(th.prod(K_precision)) - 0.5 * th.norm(temp5, dim=1, keepdim=True) ** 2.
+        nll -= temp6.sum()
+        ###
+        
+        return nll
     
     @staticmethod
     def setParams(network:nn.Module, decay:float) -> list:
@@ -339,19 +390,19 @@ if __name__ == "__main__":
     from jycontrol.system import Pendulum
     
     p = Pendulum()
-    X_l, U_l = collect_rollouts(p, 20, 150)
-    X_lv, U_lv = collect_rollouts(p, 10, 150)
+    X_l, U_l = collect_rollouts(p, 100, 200)
+    X_lv, U_lv = collect_rollouts(p, 10, 200)
     
     trainDataset = pkaDataset(X_list=X_l, U_list=U_l)
-    trainSet = data.DataLoader(dataset=trainDataset, batch_size=20, shuffle=True)
+    trainSet = data.DataLoader(dataset=trainDataset, batch_size=100, shuffle=True)
     
     valiDataset = pkaDataset(X_list=X_lv, U_list=U_lv)
     valiSet = data.DataLoader(dataset=valiDataset, batch_size=1, shuffle=False)
     
-    dim_xl = 10
+    dim_xl = 20
     dim_obs = 2
     
-    net_hyper = {"layer":4, "nodes":[dim_obs,5,10,2*dim_xl], "actfunc":["ReLU", "ReLU", None]}
+    net_hyper = {"layer":5, "nodes":[dim_obs,5,10,20,2*dim_xl], "actfunc":["ReLU", "ReLU", "ReLU", None]}
     ext_param = ExternalParams(dim_xl, dim_obs)
     mlpdmdc = PKA(net_hyper, ext_param)
-    mlpdmdc.fit(trainSet, valiSet, lr=1e-2, epoch_num=1000, min_subsample_len=100, logging_dir='/home/jiayun/Desktop/MY_ML/jylearn/timeseries/runs')
+    mlpdmdc.fit(trainSet, valiSet, lr=1e-3, epoch_num=1000, min_subsample_len=150, logging_dir='/home/jiayun/Desktop/MY_ML/jylearn/timeseries/runs')
