@@ -115,7 +115,7 @@ class MLPDMDc:
                 traj_Y_batch_lift = self.lifting_func(traj_Y_batch)
                 
                 traj_U_batch = traj_U_batch.to(device)
-                A, B = self.get_state_matrices(traj_X_batch, traj_Y_batch, traj_X_batch_lift, traj_Y_batch_lift, traj_U_batch) # A, B should be (xl, xl) and (xl, u), not a batch data
+                A, B = MLPDMDc.get_state_matrices(traj_X_batch, traj_Y_batch, traj_X_batch_lift, traj_Y_batch_lift, traj_U_batch) # A, B should be (xl, xl) and (xl, u), not a batch data
 
                 self.A = A
                 self.B = B
@@ -190,8 +190,8 @@ class MLPDMDc:
             plt.subplot(int("33{}".format(i+1)))
             pred_traj = predict_trajs[i]
             gt_traj = gt_trajs[i]
-            plt.plot(gt_traj, '-.r', label='ground truth')
-            plt.plot(pred_traj, '-b', label='prediction')
+            plt.plot(gt_traj[:50,:], '-.r', label='ground truth')
+            plt.plot(pred_traj[:50,:], '-b', label='prediction')
             plt.grid()
             if i > 5:
                 plt.xlabel("Time Step")
@@ -204,20 +204,21 @@ class MLPDMDc:
         plt.tight_layout()
         
         return validation_loss, vali_fig
-        
-    def get_state_matrices(self, traj_X_batch, traj_Y_batch, traj_X_batch_lift, traj_Y_batch_lift, traj_U_batch):
+    
+    @staticmethod
+    def get_state_matrices(traj_X_batch, traj_Y_batch, traj_X_batch_lift, traj_Y_batch_lift, traj_U_batch):
         '''
         '''
-        X = traj_X_batch.view(-1, traj_X_batch.shape[-1])
-        Y = traj_Y_batch.view(-1, traj_Y_batch.shape[-1])
+        X = traj_X_batch.reshape(-1, traj_X_batch.shape[-1])
+        Y = traj_Y_batch.reshape(-1, traj_Y_batch.shape[-1])
         
-        Xl = traj_X_batch_lift.view(-1, traj_X_batch_lift.shape[-1])
-        Yl = traj_Y_batch_lift.view(-1, traj_Y_batch_lift.shape[-1])
+        Xl = traj_X_batch_lift.reshape(-1, traj_X_batch_lift.shape[-1])
+        Yl = traj_Y_batch_lift.reshape(-1, traj_Y_batch_lift.shape[-1])
         
         # add the original subspace into lifting subspace
         Xl_ = th.cat([X, Xl], dim=1)
         Yl_ = th.cat([Y, Yl], dim=1)
-        U = traj_U_batch.view(-1, traj_U_batch.shape[-1])
+        U = traj_U_batch.reshape(-1, traj_U_batch.shape[-1])
         
         G = th.cat([Xl_, U], dim=1) # (l, dim_xl + dim_u)
         G_ = G.T @ G # (dim_xl + dim_u, dim_xl + dim_u)
@@ -239,7 +240,8 @@ class MLPDMDc:
         pred += th.einsum("iu,bu->bi", B, u_batch)
         
         x_dim = x_batch.shape[1]
-        batch_loss = self.loss_func(pred[:,:x_dim], aug_x_shift_batch_lift[:,:x_dim])
+        # here, you need to decide, whether include the whole states?
+        batch_loss = self.loss_func(pred, aug_x_shift_batch_lift)#[:,:x_dim], aug_x_shift_batch_lift[:,:x_dim]) 
         
         return batch_loss
         
@@ -259,7 +261,7 @@ class MLPDMDc:
             xinit = xl_init[:,:xinit.shape[1]]
             reconstruct_traj.append(xinit.detach().cpu().numpy())
             # lifting in a closed-loop style !
-            xl_init = th.cat([xinit, self.lifting_func(xinit)], dim=1)
+            # xl_init = th.cat([xinit, self.lifting_func(xinit)], dim=1)
         return np.concatenate(reconstruct_traj)
         
 if __name__ == "__main__":
@@ -267,11 +269,11 @@ if __name__ == "__main__":
     from jycontrol.system import Pendulum
     
     p = Pendulum()
-    X_l, U_l = collect_rollouts(p, 500, 150)
+    X_l, U_l = collect_rollouts(p, 300, 150)
     X_lv, U_lv = collect_rollouts(p, 20, 150)
     dataset1 = StateMatricesDataset(X_list=X_l, U_list=U_l)
     dataset2 = TripletsDataset(X_list=X_l, U_list=U_l)
-    matrices_dataset = data.DataLoader(dataset=dataset1, batch_size=500, shuffle=True)
+    matrices_dataset = data.DataLoader(dataset=dataset1, batch_size=300, shuffle=True)
     triplet_dataset = data.DataLoader(dataset=dataset2, batch_size=len(dataset2), shuffle=True)
     
     dataset1v = StateMatricesDataset(X_list=X_lv, U_list=U_lv)

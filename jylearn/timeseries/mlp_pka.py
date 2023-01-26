@@ -17,6 +17,8 @@ th.set_printoptions(precision=4)
 ##
 # Convention: When we need to express the second mode of a distribution in terms of torch parameters, we mean "log precision matrices".
 ##
+# NOT Working ..., the objective function is problematic
+##
 
 class ExternalParams(nn.Module):
     def __init__(self, dim_x, dim_obs):
@@ -39,9 +41,9 @@ class pkaDataset(data.Dataset):
     def __init__(self, X_list, U_list) -> None:
         super().__init__()
         self.size = len(X_list)
-        self.generate_trajectory_triplets(X_list, U_list)
+        self.generate_trajectories(X_list, U_list)
         
-    def generate_trajectory_triplets(self, X_list, U_list):
+    def generate_trajectories(self, X_list, U_list):
         '''
         '''
         self.X_data, self.U_data = [], []
@@ -74,7 +76,8 @@ class PKA(object):
             self,
             train_dataset:      pkaDataset,
             vali_dataset:       pkaDataset,
-            lr:                 float,
+            lr_net:             float,
+            lr_ext:             float,
             epoch_num:          int,
             min_subsample_len:  int,
             logging_dir:        str
@@ -82,9 +85,9 @@ class PKA(object):
         ''' Training the neural network.
         '''
         net_param = PKA.setParams(self.lifting_func, 0.)
-        ext_param = PKA.setParams(self.external_param, 0.)
+        ext_param = [{'params': self.external_param.parameters(), 'lr':lr_ext}]#PKA.setParams(self.external_param, 0.)
         
-        optimizer = Adam(net_param + ext_param, lr=lr)
+        optimizer = Adam(net_param + ext_param, lr=lr_net)
         writer = SummaryWriter(logging_dir)
         
         whole_train_set = iter(train_dataset)
@@ -122,11 +125,17 @@ class PKA(object):
                                                                              traj_Xb, traj_Xb_lift, traj_Ub, start_end_index)
                 
             # inner loop, update parameters
-            for batch_index in range(batch_num):
+            for batch_index in range(50):
                 optimizer.zero_grad()
                 objective = PKA.log_likelihood_loss(self.external_param, A, B, C, traj_Xb_lift_smoothed, traj_Xb_lift, traj_Xb, traj_Ub, start_end_index, batch_index)
                 objective.backward()
                 optimizer.step()
+                
+                # the external parameter shouldn't be too large! reminder: covariance = 1/exp(Gamma)
+                with th.no_grad():
+                    self.external_param.Gamma.clamp_(-1e6, 18)
+                    self.external_param.K.clamp_(-1e6, 18)
+                    
                 # in order to keep A, B, C up to date, we calc them iteratively, note this step is quite cheap.
                 traj_Xb_lift = self.lifting_func(traj_Xb)
                 A, B, C = self.get_state_space_model(traj_Xb, traj_Ub, traj_Xb_lift, padding)
@@ -136,33 +145,121 @@ class PKA(object):
 
             # I think we need to re-initialize the optimizer.
             net_param = PKA.setParams(self.lifting_func, 0.)
-            ext_param = PKA.setParams(self.external_param, 0.)
+            ext_param = [{'params': self.external_param.parameters(), 'lr':lr_ext}]#PKA.setParams(self.external_param, 0.)
 
-            optimizer = Adam(net_param + ext_param, lr=lr)
-            
-            # writer.add_scalar("training loss (ELBO)", epoch_loss, global_step= epoch + 1)
+            optimizer = Adam(net_param + ext_param, lr=lr_net)
+            print("Training loss: %.3f" % epoch_loss)
+            print(self.external_param.K)
+            writer.add_scalar("training loss (NLL)", epoch_loss, global_step= epoch + 1)
 
-            # with th.no_grad():
-            #     vali_loss, vali_fig = self.validate(vali_dataset)
-            # writer.add_figure("forward prediction", vali_fig, global_step= epoch + 1)
-            # writer.add_scalar("validation loss", vali_loss, global_step= epoch + 1)
+            # start validation
+            with th.no_grad():
+                # update saved state space
+                self.A, self.B, self.C = A.clone(), B.clone(), C.clone()
+                vali_loss, vali_fig = self.validate(vali_dataset)
+            writer.add_figure("forward prediction", vali_fig, global_step= epoch + 1)
+            writer.add_scalar("validation loss", vali_loss, global_step= epoch + 1)
                 
-    def validate(self,):
+    def validate(self, vali_dataset):
+        ''' start validation
+        '''
         self.lifting_func.eval()
         self.external_param.eval()
-        pass
+        
+        dim_xl, dim_u = self.B.shape
+        dim_x = self.C.shape[0]
+        dim_xl -= dim_x
+        L_func = nn.MSELoss()
+        
+        vali_loss = 0.
+        X_list, pred_X_list, pred_var_list = [], [], []
+        with th.no_grad():
+            for X, U in vali_dataset:
+                X, U = X.squeeze(dim=0).to(device).double(), U.squeeze(dim=0).to(device).double()
+                
+                x0 = X[0:1, :] # (1,dim_x)
+                x0_lift = self.lifting_func(x0)
+                x0_lift_prior, P0_lift_prior = x0_lift[:,:dim_xl].T, x0_lift[:,dim_xl:].T # (dim_xl, 1)
+                x0_lift_prior = th.cat([x0.T, x0_lift_prior], dim=0)
+                P0_lift_prior = th.cat([th.ones(dim_x, 1).to(device).double() * 15, P0_lift_prior], dim=0)
+                
+                traj_X, traj_var = self.predict_traj(x0_lift_prior, P0_lift_prior, U)
+                
+                vali_loss += L_func(traj_X, X).item()
+                pred_X_list.append(traj_X.clone())
+                pred_var_list.append(traj_var.clone())
+                X_list.append(X)
+        
+        vali_loss /= len(vali_dataset)
+        
+        vali_fig = PKA.plot_vali_traj(X_list, pred_X_list, pred_var_list, vali_loss)
+        return vali_loss, vali_fig
+            
+            
+    @staticmethod
+    def plot_vali_traj(X_list, pred_X_list, pred_var_list, vali_loss):
+        ''' plot the first 9 trajectories
+        '''
+        
+        vali_fig = plt.figure(figsize=[10,7])
+        for i in range(9):
+            plt.subplot(int("33{}".format(i+1)))
+            pred_traj = pred_X_list[i].detach().cpu().numpy()
+            pred_var = pred_var_list[i].detach().cpu().numpy()
+            gt_traj = X_list[i].detach().cpu().numpy()
+            t = np.arange(len(pred_traj))
+            plt.plot(t, gt_traj, '-.r', label='ground truth')
+            plt.plot(t, pred_traj, '-b', label='prediction')
+            # plt.fill_between(t, pred_traj[:,0]+pred_var[:,0], pred_traj[:,0]-pred_var[:,0], facecolor='green', alpha=0.3)
+            # plt.fill_between(t, pred_traj[:,1]+pred_var[:,1], pred_traj[:,1]-pred_var[:,1], facecolor='green', alpha=0.3)
+            plt.grid()
+            if i > 5:
+                plt.xlabel("Time Step")
+            if i % 3 == 0:
+                plt.ylabel("States")
+        handles, labels = plt.gca().get_legend_handles_labels()
+        by_label = OrderedDict(zip(labels, handles))
+        plt.title("Vali loss: {:.2f}".format(vali_loss))
+        plt.legend(by_label.values(), by_label.keys())
+        plt.tight_layout()
+        return vali_fig
     
-    def predict(self,):
-        pass
-    
-    def predict_traj(self, x, U):
-        pass
+    def predict_traj(self, x0_lift_prior, P0_lift_prior, U):
+        ''' forward simulation, A \mu + B u, A P A.T + Gamma
+        '''
+        with th.no_grad():
+            P0 = 1/th.exp(P0_lift_prior)
+            Gamma = 1/th.exp(self.external_param.Gamma)
+            K = 1/th.exp(self.external_param.K)
+            
+            yt = self.C @ x0_lift_prior
+            var_t = self.C @ th.diag(P0.squeeze(dim=1)) @ self.C.T + th.diag(K)
+            
+            traj_X = [yt.T.clone()]
+            traj_var = [th.diag(var_t).unsqueeze(dim=0).clone()]
+            for i in range(len(U)):
+                ut = U[i:i+1,:]
+                
+                x0_lift_prior = self.A @ x0_lift_prior + self.B @ ut.T
+                P0 = th.diag(self.A @ th.diag(P0.squeeze(dim=1)) @ self.A.T + th.diag(Gamma)).unsqueeze(dim=1)
+                
+                yt = self.C @ x0_lift_prior
+                var_t = self.C @ th.diag(P0.squeeze(dim=1)) @ self.C.T + th.diag(K)
+                
+                traj_X.append(yt.T.clone())
+                traj_var.append(th.diag(var_t).unsqueeze(dim=0).clone())
+                
+            traj_X = th.cat(traj_X, dim=0)
+            traj_var = th.cat(traj_var, dim=0)
+        
+        return traj_X, traj_var
+        
     
     @staticmethod
     def batch_discrete_smoothing(
             external_param:             ExternalParams, 
             A:                          th.Tensor,          # (dim_xl,dim_xl)
-            B:                          th.Tensor,          # (dim_xl,dim_u) 
+            B:                          th.Tensor,          # (dim_xl,dim_u)
             C:                          th.Tensor,          # (dim_x,dim_xl)
             traj_Xb:                    th.Tensor,          # (b,l,dim_xl)
             traj_Xb_lift:               th.Tensor,          # (b,l,2*dim_xl)
@@ -179,8 +276,8 @@ class PKA(object):
                 covariance is composed of L_k, L_{k,k-1}, SER book equation (3.60)
         '''
         batch_num = traj_Xb.shape[0]
-        dim_x = C.shape[0]
-        dim_xl, dim_u = B.shape
+        dim_x = traj_Xb.shape[2]
+        dim_xl = traj_Xb_lift.shape[2] // 2
         traj_length = start_end_index[1] - start_end_index[0]
         
         ## parameters initialization checked
@@ -189,9 +286,10 @@ class PKA(object):
         Y = traj_Xb[:,start_end_index[0]:start_end_index[1], :]
         U = traj_Ub[:,start_end_index[0]:start_end_index[1]-1, :]
         
-        x0_prior = traj_Xb_lift[:, start_end_index[0], :dim_xl]
+        x0_prior = th.cat([traj_Xb[:, start_end_index[0], :], traj_Xb_lift[:, start_end_index[0], :dim_xl]], dim=1)
         y0 = Y[:, 0, :] # (b, dim_x)
-        P0_precision_prior = th.exp(traj_Xb_lift[:, start_end_index[0], dim_xl:]) # (b, dim_xl)
+        P0_precision_prior_ = th.cat([th.ones(batch_num, dim_x).to(device).double() * 15, traj_Xb_lift[:, start_end_index[0], dim_xl:]], dim=1)
+        P0_precision_prior = th.exp(P0_precision_prior_) # (b, dim_xl)
         ##
         
         ## forward loop initialization checked
@@ -273,15 +371,20 @@ class PKA(object):
             traj_Xb_lift,           # (b, l, dim_xl + dim_sigma)
             padding                 # padding function
             ):
-        ''' solve least squares problems to get A, B, C matrices      
+        ''' solve least squares problems to get A, B, C matrices
+            Checked.
         '''
         dim_xl = traj_Xb_lift.shape[2] // 2
+        batch_num, length, dim_x = traj_Xb.shape
         # dim_u = traj_Ub.shape[2]
 
         ### get the A,B matrices, [A,B] = V @ pinv(G)
         mb_lift, mb_lift_delay = traj_Xb_lift[:,:-1,:dim_xl], traj_Xb_lift[:,1:,:dim_xl]        # mu
+        mb_lift = th.cat([traj_Xb[:,:-1,:], mb_lift], dim=2)
+        mb_lift_delay = th.cat([traj_Xb[:,1:,:], mb_lift_delay], dim=2)
         Sb_lift = traj_Xb_lift[:,:-1, dim_xl:]                                                  # Sigma
-        
+        Sb_lift = th.cat([th.ones(batch_num,length-1,dim_x).to(device).double() * 15, Sb_lift], dim=2)
+
         ## batch outer product to get V
         # concatenate data
         V_term1_ = mb_lift_delay.flatten(start_dim=0, end_dim=1)
@@ -300,23 +403,26 @@ class PKA(object):
         G_term2 = padding(G_term2_4)
         G = G_term1 + G_term2
         AB = V @ th.linalg.pinv(G)
-        A, B = AB[:,:dim_xl], AB[:,dim_xl:]
+        A, B = AB[:,:dim_xl+dim_x], AB[:,dim_xl+dim_x:]
         
         ### get the C matrix, C = F @ pinv(L)
-        F_term1_ = traj_Xb.flatten(start_dim=0, end_dim=1)                     # x_t
-        F_term1 = F_term1_.unsqueeze(dim=2)
+        # F_term1_ = traj_Xb.flatten(start_dim=0, end_dim=1)                     # x_t
+        # F_term1 = F_term1_.unsqueeze(dim=2)
         
-        F_term2_ = traj_Xb_lift[:,:,:dim_xl].flatten(start_dim=0, end_dim=1)   # \mu(x_t)
-        F_term2 = F_term2_.unsqueeze(dim=2)
-        F = th.einsum("bik,bjk->ij", F_term1, F_term2)
+        # F_term2_ = traj_Xb_lift[:,:,:dim_xl].flatten(start_dim=0, end_dim=1)   # \mu(x_t)
+        # F_term2 = F_term2_.unsqueeze(dim=2)
+        # F = th.einsum("bik,bjk->ij", F_term1, F_term2)
         
-        L_term1 = th.einsum("bik,bjk->ij", F_term2, F_term2)
-        Sb_lift_whole = traj_Xb_lift[:,:,dim_xl:].flatten(start_dim=0, end_dim=1)
-        L_term2_ = 1 / th.exp(Sb_lift_whole)
-        L_term2 = th.diag(L_term2_.sum(dim=0))
+        # L_term1 = th.einsum("bik,bjk->ij", F_term2, F_term2)
+        # Sb_lift_whole = traj_Xb_lift[:,:,dim_xl:].flatten(start_dim=0, end_dim=1)
+        # L_term2_ = 1 / th.exp(Sb_lift_whole)
+        # L_term2 = th.diag(L_term2_.sum(dim=0))
 
-        L = L_term1 + L_term2
-        C = F @ th.linalg.pinv(L)
+        # L = L_term1 + L_term2
+        # C = F @ th.linalg.pinv(L)
+        C = th.zeros(dim_x, dim_x + dim_xl).to(device).double()
+        for i in range(dim_x):
+            C[i,i] = 1.
 
         return A, B, C
     
@@ -336,43 +442,47 @@ class PKA(object):
             This function was written in a form to utilize the parallel computing with GPU, therefore, quite efficient to compute
             the whole trajectory.
         '''
-        dim_x, dim_xl = C.shape
-        X_smoothed = traj_Xb_lift_smoothed[batch_index]
-        U = traj_Ub[batch_index, start_end_index[0]:start_end_index[1]-1, :]
-        X_obs = traj_Xb[batch_index, start_end_index[0]:start_end_index[1], :]
-        x0_prior = traj_Xb_lift[batch_index, start_end_index[0]:start_end_index[0]+1, :dim_xl]
-        P0_prior = traj_Xb_lift[batch_index, start_end_index[0], dim_xl:]
-        nll = 0
+        dim_x, dim_xl = traj_Xb.shape[2], traj_Xb_lift.shape[2]//2
+        batch_num = traj_Xb.shape[0]
+        X_smoothed = traj_Xb_lift_smoothed
+        U = traj_Ub[:, start_end_index[0]:start_end_index[1]-1, :]
+        X_obs = traj_Xb[:, start_end_index[0]:start_end_index[1], :]
+        
+        x0_prior = traj_Xb_lift[:, start_end_index[0]:start_end_index[0]+1, :dim_xl]
+        x0_prior = th.cat([traj_Xb[:, start_end_index[0]:start_end_index[0]+1, :], x0_prior], dim=2)
+        P0_prior = traj_Xb_lift[:, start_end_index[0], dim_xl:]
+        P0_prior = th.cat([th.ones(batch_num, dim_x).to(device).double() * 15, P0_prior], dim=1)
+        nll = 0.
         
         ### check step 1
         mean_1 = x0_prior
         P0_prior_precision = th.exp(P0_prior)
         
-        x0_rvar = X_smoothed[0].unsqueeze(dim=0) # random variable
-        temp1 = th.einsum("j,lj->lj", th.sqrt(P0_prior_precision), x0_rvar - mean_1)
-        temp2 = 0.5 * th.log(th.prod(P0_prior_precision)) - 0.5 * th.norm(temp1, dim=1, keepdim=True) ** 2.
+        x0_rvar = X_smoothed[:,0:1,:] # random variable
+        temp1 = th.einsum("bj,blj->blj", th.sqrt(P0_prior_precision), x0_rvar - mean_1) # (b,dim_xl) x (b,1,dim_xl) -> (b, 1, dim_xl)
+        temp2 = 0.5 * th.log(th.prod(P0_prior_precision, dim=1, keepdim=True)) - 0.5 * th.norm(temp1, dim=2) ** 2.
         nll -= temp2.sum()
         # because the magnitude of initial state loss will generally len(X_smoothed) times smaller than other 2 terms
         ###
         
         ### check step 2
-        mean_2_ = th.einsum("ij,lj->li", A, X_smoothed[:-1])
-        mean_2 = mean_2_ + th.einsum("ij,lj->li", B, U)
+        mean_2_ = th.einsum("ij,blj->bli", A, X_smoothed[:,:-1,:]) # (b,l-1,dim_xl)
+        mean_2 = mean_2_ + th.einsum("ij,blj->bli", B, U)
         Gamma_precision = th.exp(external_param.Gamma)
 
-        x_rvar = X_smoothed[1:] # random variable
-        temp3 = th.einsum("j,lj->lj", th.sqrt(Gamma_precision), x_rvar - mean_2)
-        temp4 = 0.5 * th.log(th.prod(Gamma_precision)) - 0.5 * th.norm(temp3, dim=1, keepdim=True) ** 2.
+        x_rvar = X_smoothed[:,1:,:] # random variable
+        temp3 = th.einsum("j,blj->blj", th.sqrt(Gamma_precision), x_rvar - mean_2) # (b,l-1,dim_xl)
+        temp4 = 0.5 * th.log(th.prod(Gamma_precision)) - 0.5 * th.norm(temp3, dim=2) ** 2.
         nll -= temp4.sum()
         ###
         
         ### check step 3
-        mean_3 = th.einsum("ij,lj->li", C, X_smoothed)
+        mean_3 = th.einsum("ij,blj->bli", C, X_smoothed) # (b,l,dim_xl)
         K_precision = th.exp(external_param.K)
 
         x_rvar_2 = X_obs # random variable
-        temp5 = th.einsum("j,lj->lj", th.sqrt(K_precision), x_rvar_2 - mean_3)
-        temp6 = 0.5 * th.log(th.prod(K_precision)) - 0.5 * th.norm(temp5, dim=1, keepdim=True) ** 2.
+        temp5 = th.einsum("j,blj->blj", th.sqrt(K_precision), x_rvar_2 - mean_3)
+        temp6 = 0.5 * th.log(th.prod(K_precision)) - 0.5 * th.norm(temp5, dim=2) ** 2.
         nll -= temp6.sum()
         ###
         
@@ -406,10 +516,10 @@ if __name__ == "__main__":
     valiDataset = pkaDataset(X_list=X_lv, U_list=U_lv)
     valiSet = data.DataLoader(dataset=valiDataset, batch_size=1, shuffle=False)
     
-    dim_xl = 10
-    dim_obs = 2
+    dim_xl = 40
+    dim_x = 2
     
-    net_hyper = {"layer":5, "nodes":[dim_obs,5,10,20,2*dim_xl], "actfunc":["ReLU", "ReLU", "ReLU", None]}
-    ext_param = ExternalParams(dim_xl, dim_obs)
+    net_hyper = {"layer":5, "nodes":[dim_x,5,15,45,2*dim_xl], "actfunc":["ReLU", "ReLU", "ReLU", None]}
+    ext_param = ExternalParams(dim_x+dim_xl, dim_x)
     mlpdmdc = PKA(net_hyper, ext_param)
-    mlpdmdc.fit(trainSet, valiSet, lr=2e-3, epoch_num=1000, min_subsample_len=150, logging_dir='/home/jiayun/Desktop/MY_ML/jylearn/timeseries/runs')
+    mlpdmdc.fit(trainSet, valiSet, lr_net=1e-2, lr_ext=1e-2, epoch_num=500, min_subsample_len=150, logging_dir='/home/jiayun/Desktop/MY_ML/jylearn/timeseries/runs')
