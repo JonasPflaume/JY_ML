@@ -12,10 +12,10 @@ The gym **pendulum** environment is chosen to be the benchmark of control projec
 
 | time series      | remark           |
 | ------------- |:-------------:|
-|  Linear dynamical system     |   training by EM    |
-|  Dynamic mode decomposition (DMD)     |   standard    |
-|  MLP-DMD     |   feature extraction by neural networks   |
-|  Differentiable Kalman smoother     |   implemented through tensor operation   |
+|  Linear dynamical system     |   training through EM    |
+|  Dynamic mode decomposition (DMD)     |   standard implementation    |
+|  MLP-DMD     |   DMD with feature extraction by MLP   |
+|  Differentiable Kalman smoother     |   batch implementation by tensor operation   |
 |  Flexible Dynamic movement primitives (DMP)     |   Higher oder DMP   |
 
 | Unsupervised learning      | remark           |
