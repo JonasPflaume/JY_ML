@@ -38,7 +38,7 @@ The gym **pendulum** environment is chosen to be the benchmark of control projec
 | FLQR<sup>3 </sup> | - | - |
 | DMD-MPC<sup>4 </sup> | -164.93 | 10945.07 |
 | RK4-MPC<sup>5 </sup> | -142.25 | 9367.64 |
-| MLP-DMD-MPC<sup>7 </sup>| -384.44 | 231701.02 |
+| MLP-DMD-MPC| -384.44 | 231701.02 |
 | ...| | |
 
 Notes:  
