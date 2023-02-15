@@ -47,6 +47,14 @@ class MLP(nn.Module):
     def forward(self, x):
         return self.net(x)
     
+    def save_model(self, addr:str):
+        th.save(self.state_dict(), addr)
+        
+    def loar_model(self, addr:str):
+        self.load_state_dict(th.load(addr))
+        self.eval()
+        
+    
 
 if __name__ == "__main__":
     hyper = {"layer":4, "nodes":[12,6,3,1], "actfunc":["ReLU", "Tanh", None]}

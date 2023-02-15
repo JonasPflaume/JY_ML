@@ -11,6 +11,7 @@ from jylearn.timeseries.utils import collect_rollouts
 
 from tqdm import tqdm
 from collections import OrderedDict
+import os
 device = "cuda" if th.cuda.is_available() else "cpu"
 
 ##########
@@ -88,7 +89,6 @@ class MLPDMDc:
             matrices_dataset, 
             triplet_dataset, 
             matrices_dataset_vali,
-            triplet_dataset_vali,
             lr, 
             num_epoch, 
             logging_dir):
@@ -109,7 +109,6 @@ class MLPDMDc:
             epoch_loss = 0.0
             
             for x_batch, x_shift_batch, u_batch in triplet_dataset:
-                
                 # lift to latent state space
                 traj_X_batch_lift = self.lifting_func(traj_X_batch)
                 traj_Y_batch_lift = self.lifting_func(traj_Y_batch)
@@ -139,11 +138,18 @@ class MLPDMDc:
             epoch_loss /= len(triplet_dataset)
             writer.add_scalar("training loss", epoch_loss, global_step= epoch + 1)
             if epoch % 10 == 0:
-                vali_loss, vali_fig = self.validate(matrices_dataset_vali, triplet_dataset_vali)
+                vali_loss, vali_fig = self.validate(matrices_dataset_vali)
                 writer.add_figure("forward prediction", vali_fig, global_step= epoch + 1)
                 writer.add_scalar("validation loss", vali_loss, global_step= epoch + 1)
+                
+                curr_work_dir = os.path.dirname(os.path.realpath(__file__))
+                
+                addr_stem = os.path.join(curr_work_dir, "models/Epoch_{0}_VLoss_{1:.2f}".format(epoch, vali_loss))
+                self.lifting_func.save_model(addr_stem+"_net.pth")
+                th.save(self.A.detach().cpu(), addr_stem+"_A.pth")
+                th.save(self.B.detach().cpu(), addr_stem+"_B.pth")
         
-    def validate(self, matrices_dataset_vali, triplet_dataset_vali):
+    def validate(self, matrices_dataset_vali):
         '''
         '''
         with th.no_grad():
@@ -151,22 +157,7 @@ class MLPDMDc:
             
             predict_trajs, gt_trajs = [], []
             validation_loss = 0.0
-            ##
-            for x_batch, x_shift_batch, u_batch in triplet_dataset_vali:
-                # batch loss simulation
-                
-                x_batch = x_batch.to(device)
-                x_shift_batch = x_shift_batch.to(device)
-                u_batch = u_batch.to(device)
 
-                x_batch_lift = self.lifting_func(x_batch)
-                x_shift_batch_lift = self.lifting_func(x_shift_batch)
-                batch_loss = self.get_triplet_loss(self.A, self.B, x_batch, x_shift_batch, x_batch_lift, x_shift_batch_lift, u_batch)
-                
-                validation_loss += batch_loss.item()
-                    
-            validation_loss /= len(triplet_dataset_vali)
-            ##
             counter = 0
             for traj_X, traj_Y, traj_U in matrices_dataset_vali:
                 counter += 1
@@ -174,24 +165,27 @@ class MLPDMDc:
                 traj_Y = traj_Y.squeeze(dim=0).to(device)
                 traj_U = traj_U.squeeze(dim=0).to(device)
                 
-                reconstruct_traj = self.predict_traj(traj_X[0:1,:], traj_U)
-                gt_traj_tensor = th.cat([traj_X, traj_Y[-1:,:]], dim=0)
+                reconstruct_traj = self.predict_traj(traj_X[0:1,:], traj_U)[:50,:]
+                gt_traj_tensor = th.cat([traj_X, traj_Y[-1:,:]], dim=0)[:50,:].detach().cpu().numpy()
 
-                gt_traj_ = gt_traj_tensor.detach().cpu().numpy()
+                validation_loss += (np.linalg.norm(reconstruct_traj - gt_traj_tensor, axis=1) * np.linspace(1.,0.1,50)).sum() # weighted validation loss
+                
+                gt_traj_ = gt_traj_tensor
                 predict_trajs.append(reconstruct_traj)
                 gt_trajs.append(gt_traj_)
                 
                 if counter == 9:
                     break
-            
+                
+        validation_loss /= len(matrices_dataset_vali)
         # start plotting
         vali_fig = plt.figure(figsize=[10,7])
         for i in range(9):
             plt.subplot(int("33{}".format(i+1)))
             pred_traj = predict_trajs[i]
             gt_traj = gt_trajs[i]
-            plt.plot(gt_traj[:50,:], '-.r', label='ground truth')
-            plt.plot(pred_traj[:50,:], '-b', label='prediction')
+            plt.plot(gt_traj, '-.r', label='ground truth')
+            plt.plot(pred_traj, '-b', label='prediction')
             plt.grid()
             if i > 5:
                 plt.xlabel("Time Step")
@@ -242,8 +236,10 @@ class MLPDMDc:
         x_dim = x_batch.shape[1]
         # here, you need to decide, whether include the whole states?
         batch_loss = self.loss_func(pred, aug_x_shift_batch_lift)#[:,:x_dim], aug_x_shift_batch_lift[:,:x_dim]) 
-        
-        return batch_loss
+
+        L2_sparsity_penalty = th.norm( th.cat([A, B], dim=1), dim=0) ** 2.
+
+        return batch_loss + 1e-5 * L2_sparsity_penalty.sum()
         
     def predict_traj(self, xinit, traj_U):
         '''
@@ -267,13 +263,22 @@ class MLPDMDc:
 if __name__ == "__main__":
     
     from jycontrol.system import Pendulum
+    import pickle
+    # p = Pendulum()
+    # X_l, U_l = collect_rollouts(p, 200, 150)
+    # X_lv, U_lv = collect_rollouts(p, 50, 60)
+    # databackup = [X_l, U_l, X_lv, U_lv]
+    # filehandler = open("databackup","wb")
+    # pickle.dump(databackup, filehandler)
+    # filehandler.close()
+    file = open("databackup",'rb')
+    databackup = pickle.load(file)
+    file.close()
+    X_l, U_l, X_lv, U_lv = databackup
     
-    p = Pendulum()
-    X_l, U_l = collect_rollouts(p, 300, 150)
-    X_lv, U_lv = collect_rollouts(p, 20, 150)
     dataset1 = StateMatricesDataset(X_list=X_l, U_list=U_l)
     dataset2 = TripletsDataset(X_list=X_l, U_list=U_l)
-    matrices_dataset = data.DataLoader(dataset=dataset1, batch_size=300, shuffle=True)
+    matrices_dataset = data.DataLoader(dataset=dataset1, batch_size=100, shuffle=True)
     triplet_dataset = data.DataLoader(dataset=dataset2, batch_size=len(dataset2), shuffle=True)
     
     dataset1v = StateMatricesDataset(X_list=X_lv, U_list=U_lv)
@@ -281,7 +286,7 @@ if __name__ == "__main__":
     matrices_dataset_vali = data.DataLoader(dataset=dataset1v, batch_size=1, shuffle=False)
     triplet_dataset_vali = data.DataLoader(dataset=dataset2v, batch_size=len(dataset2v), shuffle=True)
     
-    hyper = {"layer":5, "nodes":[2,5,10,20,40], "actfunc":["ReLU", "ReLU", "ReLU", None]}
+    hyper = {"layer":4, "nodes":[2,5,12,24], "actfunc":["ReLU", "ReLU", None]}
     
     mlpdmdc = MLPDMDc(hyper)
-    mlpdmdc.fit(matrices_dataset, triplet_dataset, matrices_dataset_vali, triplet_dataset_vali, 2e-3, 1000, '/home/jiayun/Desktop/MY_ML/jylearn/timeseries/runs')
+    mlpdmdc.fit(matrices_dataset, triplet_dataset, matrices_dataset_vali, 2e-3, 1000, '/home/jiayun/Desktop/MY_ML/jylearn/timeseries/runs')

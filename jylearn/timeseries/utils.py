@@ -1,4 +1,3 @@
-from re import U
 import numpy as np
 
 def collect_rollouts(system, num, traj_len):

@@ -17,7 +17,8 @@ th.set_printoptions(precision=4)
 ##
 # Convention: When we need to express the second mode of a distribution in terms of torch parameters, we mean "log precision matrices".
 ##
-# NOT Working ..., the objective function is problematic, I decided to stop here, turn to polish the theoretical stuff.
+# NOT Working ..., the pipeline is pathological, besides, I met the identifiability problem.
+# I decided to stop here, turn to polish the theoretical stuff.
 ##
 
 class ExternalParams(nn.Module):
