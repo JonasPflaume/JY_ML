@@ -2,15 +2,21 @@
 The **SARCOS** dataset, which is intended for a regression problem for robot inverse dynamics, is regarded as the benchmark of supervised learning algorithms.  
 The gym **pendulum** environment is chosen to be the benchmark of control projects.
   
-  
-Update:  
-15.01.2023 add linear state space model learning with EM algorithm.
-
-08.01.2023 the numerical koopman DMDc with fixed lifting function and neural networks were implemented.
-
-31.11.2022, the kernel classes enabling the kernel operations (add, multiply and exponent) has been finished. Exact GPR and variational EM sparse GPR were implemented.
-
-07.12.2022, add an example of a variational autoencoder for minist.
+#### Finished Models
+| function learning      | remark           |
+| ------------- |:-------------:|
+| Gaussian process regression (GPR)	|  	|
+| Variational GPR (V-GPR)      |  |
+| Stochastic V-GPR      |       |
+| Ridge Regression      |       |
+| time series      | remark           |
+|  Linear dynamical system     |   training by EM    |
+|  Dynamic mode decomposition (DMD)     |   standard    |
+|  MLP-DMD     |   feature extraction by neural networks   |
+|  Differentiable Kalman smoother     |   implemented through tensor operation   |
+|  Flexible Dynamic movement primitives (DMP)     |   Higher oder DMP   |
+| Unsupervised learning      | remark           |
+|   VAE    |   Dec 14. 2022    |
 
 Finished comparison:
 #### Supervised learning  
