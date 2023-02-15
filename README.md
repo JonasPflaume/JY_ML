@@ -9,13 +9,17 @@ The gym **pendulum** environment is chosen to be the benchmark of control projec
 | Variational GPR (V-GPR)      |  |
 | Stochastic V-GPR      |       |
 | Ridge Regression      |       |
+
 | time series      | remark           |
+| ------------- |:-------------:|
 |  Linear dynamical system     |   training by EM    |
 |  Dynamic mode decomposition (DMD)     |   standard    |
 |  MLP-DMD     |   feature extraction by neural networks   |
 |  Differentiable Kalman smoother     |   implemented through tensor operation   |
 |  Flexible Dynamic movement primitives (DMP)     |   Higher oder DMP   |
+
 | Unsupervised learning      | remark           |
+| ------------- |:-------------:|
 |   VAE    |   Dec 14. 2022    |
 
 Finished comparison:
