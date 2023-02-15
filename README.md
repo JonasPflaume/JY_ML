@@ -41,9 +41,9 @@ The gym **pendulum** environment is chosen to be the benchmark of control projec
 | ...| | |
 
 Notes:  
-1. In SAC(soft actor-critic) the reinforcement learning package stablebaseline3 was used to compare with various control strategies. The training ran for 50k timesteps, to a convergence of the epi reward.  
-2. The cost matrices in iLQR are hard to tune by hand, and the torque constraints can't be taken into account. Therefore, its performance is just ok, but no problem to swing up and stabilize.  
-3. Finite horizon LQR based on Dynamic mode decomposition(DMD). Not working, the tracking objective function is hard to define.  
-4. MPC with the model learned through DMD. Very naive implementation, the symbolic feature expansion limits the speed of solution. There are better ways to include the nonlinear objective function into koopman feature.  
-5. MPC with Runge Kutta 4th order simulation on ground-truth ode. This approach can't let the gym rendering in real time.  
-6. The variational GPR is not suitable for inverse dynamics learning. Because there is no obvious hidden structure of this learning problem.  
+1. In SAC(soft actor-critic) the reinforcement learning package stablebaseline3 was used to compare with various control strategies. The training ran for 50k timesteps to a convergence of the epi reward.  
+2. The cost matrix in the iLQR is a challenge to adjust manually and more importantly cannot take into account torque constraints. As a result, it performs just fine to swing-up and stabilized at the upright equilibrium.
+3. Finite horizon LQR with Dynamic mode decomposition(DMD). Not working, the tracking objective function is hard to define.  
+4. MPC with the model learned by DMD. A quite sloppy implementation, the symbolic feature expansion limits the speed of solution. There are better ways to incorporate the nonlinear objective function into koopman feature.  
+5. MPC by Runge Kutta 4th method on ground-truth ode. This approach can't let the gym rendering in real time.  
+6. It seems there is no obvious sparse hidden structures among the inverse dynamics, the variational GPR performs not satisfactory.
