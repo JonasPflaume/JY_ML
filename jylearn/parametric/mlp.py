@@ -50,7 +50,7 @@ class MLP(nn.Module):
     def save_model(self, addr:str):
         th.save(self.state_dict(), addr)
         
-    def loar_model(self, addr:str):
+    def load_model(self, addr:str):
         self.load_state_dict(th.load(addr))
         self.eval()
         

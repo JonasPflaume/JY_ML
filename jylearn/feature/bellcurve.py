@@ -9,9 +9,10 @@ class BellCurve:
         
     def fit(self, X):
         self.dtype = X.dtype
-        assert len(X) > self.degree, "You shouldn't choose more cluster than the dataset"
+        assert len(X) >= self.degree, "You shouldn't choose more cluster than the dataset"
         X_sub_index = np.random.choice(np.arange(len(X)), self.degree, replace=False)
         self.X_sub = X[X_sub_index]
+        return self
         
     def set(self, X_sub):
         self.dtype = X_sub.dtype

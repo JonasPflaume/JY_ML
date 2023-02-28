@@ -15,20 +15,20 @@ plt.rcParams.update({
 
 
 curr_work_dir = os.path.dirname(os.path.realpath(__file__))
-curr_work_dir_model = os.path.join(curr_work_dir, "models/Epoch_740_VLoss_7.21")
+curr_work_dir_model = os.path.join(curr_work_dir, "models/Epoch_1000_VLoss_5.57")
 Ad = th.load(curr_work_dir_model+"_A.pth")
 Bd = th.load(curr_work_dir_model+"_B.pth")
 
-hyper = {"layer":4, "nodes":[2,5,12,24], "actfunc":["ReLU", "ReLU", None]} 
+hyper = {"layer":5, "nodes":[2,6,18,36,60], "actfunc":["ReLU", "ReLU", "ReLU", None]}
 lifting = MLP(hyper).double()
-lifting.loar_model(curr_work_dir_model+"_net.pth")
+lifting.load_model(curr_work_dir_model+"_net.pth")
 
 p = Pendulum()
 x, u = p.x_sym, p.u_sym
 x_next = cs.Function("x_next", [x, u], [p.xdot])
 
 dense = 26
-x, y = np.meshgrid(np.linspace(-8.4,8.4, dense),np.linspace(-12,12, dense))
+x, y = np.meshgrid(np.linspace(-6.4,6.4, dense),np.linspace(-12,12, dense))
 u1 = np.zeros((dense,dense))
 v1 = np.zeros((dense,dense))
 
@@ -56,7 +56,7 @@ plt.xlabel(r"$\theta$")
 plt.ylabel(r"$\dot{\theta}$")
 plt.legend(loc='best')#, bbox_to_anchor=(1.,0.8))
 # plt.tight_layout()
-# plt.savefig("/home/jiayun/Desktop/d.jpg", dpi=200)
+plt.savefig("/home/jiayun/Desktop/v.jpg", dpi=200)
 plt.show()
 
 ### plot eigenvalues ###
@@ -76,11 +76,11 @@ a = radius * np.cos( theta )
 b = radius * np.sin( theta )
 
 plt.figure(figsize=[6,6])
-plt.scatter(x, y, s=5, c='r')
+plt.scatter(x, y, s=10, c='r')
 plt.plot( a, b )
 plt.ylabel('Imaginary')
 plt.xlabel('Real')
 plt.grid()
 plt.tight_layout()
-# plt.savefig("/home/jiayun/Desktop/d.jpg", dpi=150)
+plt.savefig("/home/jiayun/Desktop/d.jpg", dpi=150)
 plt.show()

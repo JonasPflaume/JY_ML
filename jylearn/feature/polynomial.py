@@ -1,10 +1,10 @@
 import numpy as np
-from sklearn.preprocessing import PolynomialFeatures
+from sklearn.preprocessing import PolynomialFeatures as pf
 
 class PolynomialFT:
     def __init__(self, degree=2):
         self.degree = degree
-        self.poly = PolynomialFeatures(degree)
+        self.poly = pf(degree)
         
     def __call__(self, X):
         ''' check if the first entry is 1

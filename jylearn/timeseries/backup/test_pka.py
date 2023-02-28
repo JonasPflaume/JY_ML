@@ -1,5 +1,5 @@
 import torch as th
-from mlp_pka import PKA
+from jylearn.timeseries.backup.mlp_pka import PKA
 import matplotlib.pyplot as plt
 
 device = "cuda" if th.cuda.is_available() else "cpu"
