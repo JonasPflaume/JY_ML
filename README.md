@@ -9,6 +9,7 @@ The gym **pendulum** environment is chosen to be the benchmark of control projec
 | Variational GPR (V-GPR)      |  |
 | Stochastic V-GPR      |       |
 | Ridge Regression      |       |
+| Logistic Regression      |    Newton method   |
 
 | time series      | remark           |
 | ------------- |:-------------:|
