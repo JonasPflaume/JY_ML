@@ -32,7 +32,7 @@ def classification_toy_data():
     class_2_pos = np.array([[2,2],[-2,-2]])
     class_3_pos = np.array([[-2,2],[2,-2]])
     
-    data_len = 1000
+    data_len = 500
     class_1_X = np.random.normal(loc=class_1_pos[0], scale=np.array([1,1]), size=(data_len,2))
     
     class_2_X1 = np.random.normal(loc=class_2_pos[0], scale=np.array([0.5,1]), size=(data_len//2,2))

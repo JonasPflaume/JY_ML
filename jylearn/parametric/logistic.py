@@ -5,6 +5,13 @@ device = "cuda" if th.cuda.is_available() else "cpu"
 class LogisticReg(Classification):
     ''' Implementation of Logistic regression
         parameter optimized through Newton method.
+        
+        I didn't try to avoid potential numerical problem in newton step, 
+        but they can be easily tackled by: 
+            1. more data, 
+            2. less features, 
+            3. line search
+            4. another initial weight
     '''
     def __init__(self) -> None:
         super().__init__()
@@ -23,6 +30,7 @@ class LogisticReg(Classification):
         
         stop_flag = False
         feature_outer_product = th.einsum("bi,bj->bij", X, X) # (N, featureNum, featureNum)
+        
         while not stop_flag:
             
             Y_pred = self.predict(X, return_prob=True) # (N, classNum)
@@ -35,7 +43,8 @@ class LogisticReg(Classification):
             
             for j in range(self.classNum):
                 for k in range(self.classNum):
-                    # independent from data num, therefore, this double loop is not expensive
+                    # This double loop cannot be easily removed by tensor operation, however, 
+                    # the complexity is independent of data num but of class number, therefore, it's not expensive in most cases.
                     if k == j:
                         hessian_block = Y_pred[:,k] * (1 - Y_pred[:,j]) # (N,)
                         hessian_block = th.einsum("b,bij->ij", hessian_block, feature_outer_product)
@@ -55,8 +64,8 @@ class LogisticReg(Classification):
                 raise ValueError("Please tune the feature to make optimization well defined!")
             self.W = W_new.view(self.classNum, self.featureNum)
             
-            if th.linalg.norm(gradient) < 1e-6:
-                # convergence criterion, check Boyd book
+            if th.linalg.norm(gradient) < 1e-9: # give it a small tolerance
+                # standard convergence criterion, check Boyd book part 3
                 stop_flag = True
     
     def predict(self, x, return_prob=False):
@@ -92,7 +101,7 @@ if __name__ == "__main__":
     plt.scatter(Xtrain[class_3_index,0], Xtrain[class_3_index,1], c='c', label='class 3')
     plt.legend()
     
-    PT = BellCurve(degree=20).fit(Xtrain) # bell curve is a local feature
+    PT = BellCurve(degree=13).fit(Xtrain) # bell curve is a local feature
     Xtrain = PT(Xtrain)
     Xtest = PT(Xtest)
     
