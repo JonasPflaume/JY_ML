@@ -5,7 +5,7 @@ The gym **pendulum** environment is chosen to be the benchmark of control projec
 ### Finished Models
 | function learning      | remark           |
 | ------------- |:-------------:|
-| Gaussian process regression (GPR)	|  	|
+| Gaussian process regression (GPR)	|  include the infrustraction of composable kernels	|
 | Variational GPR (V-GPR)      |  |
 | Stochastic V-GPR      |       |
 | Ridge Regression      |       |
