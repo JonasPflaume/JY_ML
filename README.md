@@ -5,15 +5,15 @@ The gym **pendulum** environment is chosen to be the benchmark of control projec
 ### Finished Models
 | function learning      | remark           |
 | ------------- |:-------------:|
-| Gaussian process regression (GPR)	|  	|
+| Gaussian process regression (GPR)	|  include the infrustraction of composable kernels	|
 | Variational GPR (V-GPR)      |  |
 | Stochastic V-GPR      |       |
 | Ridge Regression      |       |
-| Logistic Regression      |    Multi-class, training with Newton method   |
+| Logistic Regression      |    Multi-class, trained through Newton method   |
 
 | time series      | remark           |
 | ------------- |:-------------:|
-|  Linear dynamical system     |   training through EM    |
+|  Linear dynamical system     |   trained through EM    |
 |  Dynamic mode decomposition (DMD)     |   standard implementation    |
 |  MLP-DMD     |   DMD with feature extraction by MLP   |
 |  Differentiable Kalman smoother     |   batch implementation by tensor operation   |
