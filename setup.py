@@ -29,7 +29,7 @@ setup(
     author=AUTHOR,
     author_email=EMAIL,
     url=URL,
-    packages=["jylearn", "jycontrol"],
+    packages=["aslearn", "asctr", "asopt"],
     install_requires=REQUIRED,
     include_package_data=True,
     license=""
