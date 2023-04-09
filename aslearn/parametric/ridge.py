@@ -1,5 +1,5 @@
 import torch
-from aslearn.parametric.regression import Regression
+from aslearn.base.regression import Regression
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm

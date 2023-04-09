@@ -1,5 +1,5 @@
 import torch as th
-from aslearn.parametric.classification import Classification
+from aslearn.base.classification import Classification
 device = "cuda" if th.cuda.is_available() else "cpu"
 
 class LogisticReg(Classification):

@@ -1,5 +1,5 @@
 import torch as th
-from aslearn.parametric.regression import Regression
+from aslearn.base.regression import Regression
 
 class BayesLR(Regression):
     ''' Fully Bayesian linear regression,

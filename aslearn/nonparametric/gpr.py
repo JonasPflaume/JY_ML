@@ -1,4 +1,4 @@
-from aslearn.parametric.regression import Regression
+from aslearn.base.regression import Regression
 import torch as th
 from torch.optim import LBFGS, Adam
 from tqdm import tqdm
