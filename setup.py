@@ -19,7 +19,8 @@ REQUIRED = [
     "sklearn",
     "stable-baselines3",
     "gpytorch",
-    "casadi"
+    "casadi",
+    "numba"
 ]
 
 setup(
