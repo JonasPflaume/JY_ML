@@ -8,15 +8,11 @@ def aula_main(x0, lr, theta_tol, epsi_tol, uc_tolerance, evaluate, obj_idx, eq_i
     ''' where the augmented lagrangian main loop defined 
     '''
     # initialize the parameters
-    rho_mu = np.array(1.2, dtype=np.float32)
-    rho_v = np.array(1.2, dtype=np.float32)
-    mu = np.array(1.,dtype=np.float32)
-    v = np.array(1.,dtype=np.float32)
-    # solveUC will handle the empty list
-    labd = np.zeros((len(ineq_idx),1),dtype=np.float32)
-    kappa = np.zeros((len(eq_idx),1),dtype=np.float32)
+    rho_mu = 3.0; rho_v = 3.0; mu = 1.0; v = 1.0
     
-    NUMBER_2 = np.array(2.,dtype=np.float32)
+    # solveUC will handle the empty list
+    labd = np.zeros((len(ineq_idx),1),dtype=np.float64)
+    kappa = np.zeros((len(eq_idx),1),dtype=np.float64)
 
     i = 0
     while True:
@@ -28,10 +24,10 @@ def aula_main(x0, lr, theta_tol, epsi_tol, uc_tolerance, evaluate, obj_idx, eq_i
         phi, J = evaluate(x1, returnJ=True, returnH=False)
         if ineq_idx.size > 0:
             g_x = phi[ineq_idx]
-            labd = np.maximum(labd + NUMBER_2 * mu * g_x, np.zeros_like(labd))
+            labd = np.maximum(labd + 2.0 * mu * g_x, np.zeros_like(labd))
         if eq_idx.size > 0:
             h_x = phi[eq_idx]
-            kappa += NUMBER_2 * v * h_x
+            kappa += 2.0 * v * h_x
         # 3. * try to update the mu and v (LP:this will increase the complexity in inner loop)
         mu *= rho_mu
         v *= rho_v
@@ -115,32 +111,31 @@ def aula_evaluate(x, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate):
                     H:      Hessian matrix for aula inner loop
         '''
 
-        phi = np.zeros((1,1),dtype=np.float32)
-        J = np.zeros((1, x.shape[0]),dtype=np.float32)
-        H = np.zeros((x.shape[0], x.shape[0]),dtype=np.float32)
-        NUMBER_2 = np.array(2.,dtype=np.float32)
+        phi = np.zeros((1,1),dtype=np.float64)
+        J = np.zeros((1, x.shape[0]),dtype=np.float64)
+        H = np.zeros((x.shape[0], x.shape[0]),dtype=np.float64)
 
         temp = evaluate(x, returnJ=True, returnH=True)
         phi0, J0, H_f0 = temp[0], temp[1], temp[2]
 
         if ineq_idx.size > 0:
             I_labd = np.logical_or(phi0[ineq_idx] >= 0, labd > 0)
-            I_labd = I_labd.astype(np.float32)
+            I_labd = I_labd.astype(np.float64)
             I_labd = I_labd.reshape(-1,)
             I_labd = np.diag( I_labd ) # diagnal matrix
             g_x = phi0[ineq_idx] # (len(labd),1)
             grad_g_x = J0[ineq_idx] # (len(labd),nx)
-            inq_term = ((mu * I_labd @ g_x + labd).T @ g_x).astype(np.float32)
+            inq_term = ((mu * I_labd @ g_x + labd).T @ g_x).astype(np.float64)
             phi += inq_term
-            J += (NUMBER_2 * mu * I_labd @ g_x + labd).T @ grad_g_x
-            H += NUMBER_2 * mu * grad_g_x.T @ I_labd @ grad_g_x
+            J += (2.0 * mu * I_labd @ g_x + labd).T @ grad_g_x
+            H += 2.0 * mu * grad_g_x.T @ I_labd @ grad_g_x
         if eq_idx.size > 0:
             h_x = phi0[eq_idx]
             grad_h_x = J0[eq_idx]
             eq_term = (v * h_x + kappa).T @ h_x
             phi += eq_term
-            J += (NUMBER_2 * v * h_x + kappa).T @ grad_h_x
-            H += NUMBER_2 * v * grad_h_x.T @ grad_h_x
+            J += (2.0 * v * h_x + kappa).T @ grad_h_x
+            H += 2.0 * v * grad_h_x.T @ grad_h_x
         if obj_idx.size > 0:
             grad_f_x = J0[obj_idx]
             obj_term = np.sum(phi0[obj_idx])
@@ -155,7 +150,7 @@ def aula_evaluate(x, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate):
 def constrained_opt_solve(problem:ProblemTemplate, verbose=False):
     '''
         Function-style programming enables jit.
-        we aim to achieve speed in c/c++ level.
+        we aim to achieve a competitively high run speed.
     '''
     theta_tol = 1e-6 # x tolerance
     epsi_tol = 1e-6  # constraints tolerance
@@ -174,7 +169,7 @@ def constrained_opt_solve(problem:ProblemTemplate, verbose=False):
 
 if __name__ == "__main__":
     from toyproblems import HalfCircle
-    # the aula solver spends merely 1 ms to solve the constrained problem.
+    # the aula solver spends merely .6 ms to solve the constrained problem.
     # The solver needs to be compiled before execution, therefore it takes longer for the first run.
     # However, this solver is designed for our machine learning problem, 
     # and it will be run repeatedly for a considerable long time,
@@ -184,7 +179,8 @@ if __name__ == "__main__":
     from time import time
     res = constrained_opt_solve(problem)
     s = time()
-    res = constrained_opt_solve(problem)
+
+    res = constrained_opt_solve(problem, verbose=False)
     e = time()
     print(res)
     print("Time: {:.2f} ms".format((e-s)*1000))

@@ -1,3 +1,3 @@
-This folder contains implementations of a Newton-type solver for unconstrained optimization and an augmented Lagrangian method for constrained optimization. These solvers are implemented with Numba JIT, which allows them to achieve C/C++ level speed.
+This folder contains implementations of a Newton-type solver for unconstrained optimization and an augmented Lagrangian method for constrained optimization. These solvers are implemented with Numba JIT, which allows them to achieve a competitive run speed.
 
 Both solvers are capable of solving unconstrained problems, but when working with such problems, it is advisable to use the Newton solver as the augmented Lagrangian solver may take some time to exit the outer loop, making it slower than the Newton-type solver.

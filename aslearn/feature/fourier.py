@@ -1,6 +1,6 @@
 import numpy as np
 
-class FourierBases:
+class FourierFT:
     def __init__(self, degree):
         ''' degree is the phase factor of trigonometric funcs.
         '''

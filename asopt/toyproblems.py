@@ -21,15 +21,15 @@ class HalfCircle(ProblemTemplate):
         f = x0 - x1
         eq = x0
         ineq = x0**2 + x1**2 - 1
-        phi = np.array([[f],[eq],[ineq]],dtype=np.float32)
+        phi = np.array([[f],[eq],[ineq]],dtype=np.float64)
 
         if not returnJ:
             return [phi]
         if returnJ:
-            J = np.array([[1.,-1.],[1.,0.],[2.*x0, 2.*x1]],dtype=np.float32)
+            J = np.array([[1.,-1.],[1.,0.],[2.*x0, 2.*x1]],dtype=np.float64)
             
             if returnH:
-                H =  np.zeros((2,2),dtype=np.float32)
+                H =  np.zeros((2,2),dtype=np.float64)
                 return [phi, J, H]
             else:
                 return [phi, J]
@@ -57,21 +57,21 @@ class Rosenbrock2D(ProblemTemplate):
     def evaluate(x, returnJ, returnH, a=1., b=100.):
         x0, x1 = x[0,0], x[1,0]
         f = (a - x0) ** 2 + b * (x1 - x0 ** 2) ** 2
-        phi = np.array([[f]],dtype=np.float32)
+        phi = np.array([[f]],dtype=np.float64)
         
         if not returnJ:
             return [phi]
         if returnJ:
             J11 = 2 * (x0-a) + 4 * b * x0 * (x0**2 - x1)
             J22 = 2 * b * (x1 - x0**2)
-            J = np.array([[J11,J22]],dtype=np.float32)
+            J = np.array([[J11,J22]],dtype=np.float64)
             
             if returnH:
                 H11 = 2 + 12 * b * x0 ** 2 - 4 * b * x1
                 H12 = -4 * b * x0
                 H21 = H12
                 H22 = 2 * b
-                H = np.array([[H11,H12],[H21,H22]],dtype=np.float32)
+                H = np.array([[H11,H12],[H21,H22]],dtype=np.float64)
                 return [phi, J, H]
             else:
                 return [phi, J]
@@ -87,8 +87,3 @@ class Rosenbrock2D(ProblemTemplate):
     
     def getArgsArr(self):
         return np.array([self.a, self.b])
-
-if __name__ == "__main__":
-    prob = HalfCircle()
-    x0 = prob.getInitializationSample()
-    prob.evaluate(x0, returnH=False, returnJ=False)

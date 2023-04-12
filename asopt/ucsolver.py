@@ -30,12 +30,14 @@ def btls_decrease(lr, curr_x, direction, evaluate, rho_ls=0.01, rho_a_de=0.5):
 def get_direction(J, H, verbose):
     grad = J.T
     try:
+        # non-positive fall-back
         direction = - np.linalg.solve(H, grad)
     except:
         direction = - grad
         
     direction = np.ascontiguousarray(direction)
     if np.any(grad.T @ direction > 0) or np.all(H == 0.):
+        # wolfe-condition
         if verbose:
             print('--- PULLBACK ---')
         direction = -grad
@@ -71,15 +73,16 @@ def uc_main(x0, lr, tolerance, evaluate, verbose):
     return x1
     
 def unconstrained_opt_solve(problem:ProblemTemplate, verbose=False):
-    ''' Function-style programming enables jit.
-        we aim to achieve speed in c/c++ level.
+    '''
+        Function-style programming enables jit.
+        we aim to achieve a competitively high run speed.
     '''
     evaluate = problem.evaluate
     x0 = problem.getInitializationSample()
     phi_ft = problem.getFeatureTypes()
     assert len(phi_ft) == 1 and phi_ft[0] == FT.obj, "Please use constrained optimization solver."
 
-    lr = 1.
+    lr = 1.0
     tolerance = 1e-7
     
     opt_res = uc_main(x0, lr, tolerance, evaluate, verbose)

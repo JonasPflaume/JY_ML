@@ -65,8 +65,8 @@ if __name__ == "__main__":
     X = np.random.multivariate_normal(mean, cov, 200)
     Xval = np.random.multivariate_normal(mean, cov, 50)
     
-    param1 = {"layer":3, "nodes":[2, 5, 20]}
-    param2 = {"layer":3, "nodes":[20, 5, 2]}
+    param1 = {"layer":3, "nodes":[2, 5, 20], "actfunc":["ReLU", None]}
+    param2 = {"layer":3, "nodes":[20, 5, 2], "actfunc":["ReLU", None]}
     
     import matplotlib.pyplot as plt
 
