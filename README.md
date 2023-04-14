@@ -2,7 +2,7 @@
 The **SARCOS** dataset, which is intended for a regression problem for robot inverse dynamics, is regarded as the benchmark of supervised learning algorithms.  
 The gym **pendulum** environment is chosen to be the benchmark of control projects.
   
-### Finished Models
+### Finished Algorithms
 | function learning      | remark           |
 | ------------- |:-------------:|
 | Gaussian process regression (GPR)	|  include the infrastructure of composable kernels	|
@@ -10,6 +10,7 @@ The gym **pendulum** environment is chosen to be the benchmark of control projec
 | Stochastic V-GPR      |       |
 | Ridge Regression      |       |
 | Logistic Regression      |    Multi-class, trained through Newton method   |
+| Variational RVM      |    RVM: Relevance Vector Machine   |
 
 | time series      | remark           |
 | ------------- |:-------------:|
@@ -22,6 +23,10 @@ The gym **pendulum** environment is chosen to be the benchmark of control projec
 | Unsupervised learning      | remark           |
 | ------------- |:-------------:|
 |   VAE    |   Dec 14. 2022    |
+
+| Optimization      | remark           |
+| ------------- |:-------------:|
+|   Augmented Lagrangian    |  high-performance through numba  |
 
 ### Finished comparison:
 #### Supervised learning  
