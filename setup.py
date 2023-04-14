@@ -7,7 +7,7 @@ DESCRIPTION = "jiayun's machine learning & control packages"
 URL = ""
 EMAIL = "li.jiayun@outlook.com"
 AUTHOR = "Jiayun Li"
-REQUIRES_PYTHON = ">=3.6.9"
+REQUIRES_PYTHON = ">=3.9"
 VERSION = "0.0.1"
 #torch==1.7.1
 REQUIRED = [
