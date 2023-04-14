@@ -1,6 +1,6 @@
 import numpy as np
 from numba import jit
-from base import ProblemTemplate, FT
+from asopt.base import FT
 
 @jit(nopython=True)
 def btls_increase(lr, rho_a_in=1.2, sigmax=1.):
@@ -72,18 +72,14 @@ def uc_main(x0, lr, tolerance, evaluate, verbose):
         i += 1
     return x1
     
-def unconstrained_opt_solve(problem:ProblemTemplate, verbose=False):
+def unconstrained_opt_solve(x0, evaluate, problem_FT, tolerance = 1e-6, verbose=False):
     '''
         Function-style programming enables jit.
         we aim to achieve a competitively high run speed.
     '''
-    evaluate = problem.evaluate
-    x0 = problem.getInitializationSample()
-    phi_ft = problem.getFeatureTypes()
-    assert len(phi_ft) == 1 and phi_ft[0] == FT.obj, "Please use constrained optimization solver."
+    assert len(problem_FT) == 1 and problem_FT[0] == FT.obj, "Please use constrained optimization solver."
 
     lr = 1.0
-    tolerance = 1e-7
     
     opt_res = uc_main(x0, lr, tolerance, evaluate, verbose)
     
@@ -98,10 +94,14 @@ if __name__ == "__main__":
     from toyproblems import Rosenbrock2D
     import time
     problem = Rosenbrock2D()
-    res = unconstrained_opt_solve(problem, verbose=False)
+    res = unconstrained_opt_solve(  problem.getInitializationSample(),
+                                    problem.evaluate,
+                                    problem.getFeatureTypes(), verbose=False)
     
     s = time.time()
-    res = unconstrained_opt_solve(problem, verbose=False)
+    res = unconstrained_opt_solve(problem.getInitializationSample(),
+                                problem.evaluate,
+                                problem.getFeatureTypes(), verbose=False)
     e = time.time()
     print("Our solver use: {:.2f} ms".format(1000*(e-s)))
     

@@ -1,4 +1,4 @@
-from asopt.base import ProblemTemplate, FT
+from asopt.base import FT
 from asopt.ucsolver import get_direction, btls_increase
 from numba import jit
 import numpy as np
@@ -147,17 +147,18 @@ def aula_evaluate(x, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate):
         assert J.shape[0] == 1
         return [phi, J, H]
     
-def constrained_opt_solve(problem:ProblemTemplate, verbose=False):
+def constrained_opt_solve(x0, evaluate, problem_FT, theta_tol=1e-6, epsi_tol=1e-6, uc_tolerance=1e-6, verbose=False):
     '''
         Function-style programming enables jit.
         we aim to achieve a competitively high run speed.
+        
+        :param x0               initial x
+        
+        :param theta_tol        x tolerance                 defalt = 1e-6   
+        :param epsi_tol         constraints tolerance       defalt = 1e-6   
+        :param uc_tolerance     unconstrained tolerance     defalt = 1e-6   
     '''
-    theta_tol = 1e-6 # x tolerance
-    epsi_tol = 1e-6  # constraints tolerance
-    uc_tolerance = 1e-6
-    problem_FT = problem.getFeatureTypes()
-    x0 = problem.getInitializationSample()
-    evaluate = problem.evaluate
+    
     lr = 1.
     
     obj_idx = np.where(np.squeeze(problem_FT) == FT.obj)[0]
@@ -177,10 +178,15 @@ if __name__ == "__main__":
     problem = HalfCircle()
 
     from time import time
-    res = constrained_opt_solve(problem)
+    # not necessarily use 
+    res = constrained_opt_solve(problem.getInitializationSample(),
+                                problem.evaluate,
+                                problem.getFeatureTypes())
     s = time()
 
-    res = constrained_opt_solve(problem, verbose=False)
+    res = constrained_opt_solve(problem.getInitializationSample(),
+                                problem.evaluate,
+                                problem.getFeatureTypes())
     e = time()
     print(res)
     print("Time: {:.2f} ms".format((e-s)*1000))

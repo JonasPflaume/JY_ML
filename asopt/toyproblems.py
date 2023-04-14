@@ -1,17 +1,19 @@
-from asopt.base import ProblemTemplate
 from asopt.base import FT
 import numpy as np
 from numba import jit
 
-class HalfCircle(ProblemTemplate):
+# sometimes, it's not easy to pass variables to evaluate function
+# which needs to be a nopython numba function
+
+class HalfCircle:
     ''' A constrained toy problem: x \in R^2
         f(x) = x - y
                 x = 0
         x^2 + y^2 <= 1
         optimal result at: x* = (0,1)
     '''
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self):
+        super().__init__()
     
     @staticmethod
     @jit(nopython=True)
@@ -34,16 +36,13 @@ class HalfCircle(ProblemTemplate):
             else:
                 return [phi, J]
 
-    def getDimension(self):
-        return 2
-
     def getFeatureTypes(self):
         return [FT.obj, FT.eq, FT.ineq]
 
     def getInitializationSample(self):
         return np.array([[2.],[2.]]) # Not a interior point !
 
-class Rosenbrock2D(ProblemTemplate):
+class Rosenbrock2D:
     ''' An unconstrained problem
         f(x,y) = (a-x)^2 + b(y-x^2)^2
         a = 1, b = 100
@@ -76,14 +75,8 @@ class Rosenbrock2D(ProblemTemplate):
             else:
                 return [phi, J]
 
-    def getDimension(self):
-        return 2
-
     def getFeatureTypes(self):
         return [FT.obj]
 
     def getInitializationSample(self):
         return np.array([[0.],[0.]])
-    
-    def getArgsArr(self):
-        return np.array([self.a, self.b])
