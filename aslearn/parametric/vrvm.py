@@ -1,5 +1,6 @@
 import torch as th
 from aslearn.base.regression import Regression
+from decimal import Decimal
 
 device = "cuda" if th.cuda.is_available() else "cpu"
 
@@ -15,23 +16,23 @@ class VRVM(Regression):
         super().__init__()
         self.__initialize_parameters(input_dim, output_dim)
         
-    def __initialize_parameters(self, nx, ny, small_init=1e-12):
+    def __initialize_parameters(self, nx, ny, noise_init=1e-12, regularization_init=1e-12):
         ''' initialize the variational parameters to make the re-training starts warmly.
         '''
         # initialize model parameter
         # q(alpha): prior of weight precision, product of gamma distributions, 
         # gamma_a:(ny,nx), gamma_b:(ny,nx)
         # initialized to near 0. is usually a good choice
-        self.gamma_aN = small_init * th.ones(ny, nx).to(device).double()
-        self.gamma_bN = small_init * th.ones(ny, nx).to(device).double()
+        self.gamma_aN = regularization_init * th.ones(ny, nx).to(device).double()
+        self.gamma_bN = regularization_init * th.ones(ny, nx).to(device).double()
         self.gamma_a0 = self.gamma_aN.clone()
         self.gamma_b0 = self.gamma_bN.clone()
         
         # q(beta): prior of precision of output noise
         # gamma_c:(ny,1), gamma_d:(ny,1)
         # initialized to near 0. is usually a good choice
-        self.gamma_cN = small_init * th.ones(ny, 1).to(device).double()
-        self.gamma_dN = small_init * th.ones(ny, 1).to(device).double()
+        self.gamma_cN = noise_init * th.ones(ny, 1).to(device).double()
+        self.gamma_dN = noise_init * th.ones(ny, 1).to(device).double()
         self.gamma_c0 = self.gamma_cN.clone()
         self.gamma_d0 = self.gamma_dN.clone()
         
@@ -39,7 +40,7 @@ class VRVM(Regression):
         self.meanN = th.zeros(ny, nx).to(device).double()
         self.covarianceN = th.zeros(ny, nx, nx).to(device).double()
         
-    def fit(self, X, Y, tolerance=3e-6):
+    def fit(self, X, Y, tolerance=1e-5):
         '''
         '''
         # number of data, feature dimension
@@ -59,12 +60,11 @@ class VRVM(Regression):
         diagonal_index = th.arange(nx)
         stop_flag = False
         step_counter = 0
-        mean_momentum = th.zeros_like(meanN).to(device).double() # heuristic momentum acceleration
-        
+        curr_tolerance_criterion = float("inf")
         while not stop_flag:
             step_counter += 1
             if step_counter % 50 == 0:
-                print(step_counter)
+                print("step: ", step_counter, " tolerance: {:.2E}".format(Decimal(curr_tolerance_criterion)))
             else:
                 print("", end=">")
             # expect terms
@@ -82,12 +82,13 @@ class VRVM(Regression):
             
             mean_temp = XTY # (nx, ny)
             mean_temp = th.einsum("bij,jb->bi", covarianceN, mean_temp) # (ny,nx)
-            mean_temp = th.clip(E_beta * mean_temp, min=1e-5)
+            mean_temp = E_beta * mean_temp
             mean_change = mean_temp - meanN
-            if th.abs( mean_change ).sum() / th.numel( mean_change )  < tolerance:
+            curr_tolerance_criterion = (th.abs( mean_change ).sum() / th.numel( mean_change )).item()
+            if curr_tolerance_criterion  < tolerance:
                 stop_flag = True
-            mean_momentum = 0.85 * mean_momentum + 0.15 * mean_change
-            meanN = mean_temp + 5.0*mean_momentum
+
+            meanN = mean_temp.clone()
             
             # update q(alpha)
             gamma_aN = self.gamma_a0 + 0.5
@@ -118,7 +119,8 @@ class VRVM(Regression):
         return self
     
     def marginal_likelihood(self):
-        ''' should be a differentiable loss function TODO
+        ''' TODO
+            No other function, can only be used to score the feature.
         '''
         return
     

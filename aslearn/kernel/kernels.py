@@ -320,7 +320,9 @@ class Matern(Kernel):
                 return (sigma.squeeze(2) * (1.0 + distance + distance**2 / 3.0) * th.exp(-distance))
             else:
                 K = dists * th.sqrt(th.tensor([5.]).to(device))
-                K = sigma * (1.0 + K + K**2 / 3.0) * th.exp(-K)
+                temp1 = K**2 / 3.0
+                temp2 = th.exp(-K)
+                K = sigma * (1.0 + K + temp1) * temp2
         elif th.isinf(mu):
             if diag:
                 assert x.shape == y.shape, "they must be the same input data!"
@@ -343,6 +345,7 @@ class Matern(Kernel):
 
 class RQK(Kernel):
     ''' rational quadratic kernel
+        TODO: solve numerical instability
     '''
     counter = 0
     

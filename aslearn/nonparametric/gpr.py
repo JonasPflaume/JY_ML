@@ -1,7 +1,7 @@
 from aslearn.base.regression import Regression
 import torch as th
 from torch.optim import LBFGS, Adam
-from tqdm import tqdm
+import numpy as np
 device = "cuda" if th.cuda.is_available() else "cpu"
 th.pi = th.acos(th.zeros(1)).item() * 2
 
@@ -13,8 +13,15 @@ class ExactGPR(Regression):
                     the kernel function
         '''
         self.kernel = kernel
+        self.evidence_evaluate_counter = 0
 
-    def fit(self, X, Y, call_hyper_opt=False, optimizer_type="LBFGS", **kwargs):
+    def fit(self, X, Y, 
+            call_hyper_opt=False, 
+            solver="LBFGS",
+            lbfgs_evidence_barier=-1e9,
+            adam_batch_size=128,
+            adam_tolerance=1e-2
+                                ):
         '''
         '''
         if len(X.shape) == 1:
@@ -29,44 +36,57 @@ class ExactGPR(Regression):
         # call the hyperparameter optimization
         
         if call_hyper_opt:
-            lr, epoch = kwargs.get("lr"), kwargs.get("epoch")
             evidence = float("-inf")
             self.kernel.train()
-            pbar = tqdm(range(epoch), desc =str(evidence))
-            if optimizer_type == "LBFGS":
+            if solver == "LBFGS":
                 optimizer = LBFGS(params=self.kernel.parameters(), 
-                                    lr=lr, 
-                                    max_iter=10)
+                                    lr=1., 
+                                    max_iter=2000, 
+                                    tolerance_change=1e-6,
+                                    line_search_fn="strong_wolfe")
                 
                 self.curr_evidence = evidence
                 def closure():
+                    self.evidence_evaluate_counter += 1
                     optimizer.zero_grad()
-                    evidence = ExactGPR.evidence(self.kernel, X, Y)
+                    try:
+                        evidence = ExactGPR.evidence(self.kernel, X, Y)
+                        objective = -evidence
+                        objective.backward()
+                    except:
+                        evidence = th.tensor(lbfgs_evidence_barier)
+                        objective = -evidence
                     self.curr_evidence = evidence.item()
-                    objective = -evidence
-                    objective.backward()
+                    if self.evidence_evaluate_counter % 50 == 0:
+                        print("Current evidence: %.2f" % evidence.item())
+                    else:
+                        print(">", end="")
                     return objective
                 
-                for _ in pbar:
-                    optimizer.step(closure)
-                    pbar.set_description("{:.2f}".format(self.curr_evidence))
-            elif optimizer_type == "Adam":
-                optimizer = Adam(params=self.kernel.parameters(), lr=lr)
+                optimizer.step(closure)
+            elif solver == "Adam":
+                optimizer = Adam(params=self.kernel.parameters(), lr=1e-2)
                 self.curr_evidence = evidence
-                batch_size = kwargs.get("batch_size", 256)
-                for _ in pbar:
+                loss_history = [float("inf")]
+                stop_flag = False
+                while not stop_flag:
                     optimizer.zero_grad()
-                    batch_index = th.randperm(len(X))[:batch_size]
+                    batch_index = th.randperm(len(X))[:adam_batch_size]
                     evidence = ExactGPR.evidence(self.kernel, X[batch_index], Y[batch_index])
-                    self.curr_evidence = evidence.item()
-                    objective = -evidence
-                    objective.backward()
+                    loss= - evidence
+                    self.evidence_evaluate_counter += 1
+                    loss.backward()
                     optimizer.step()
-                    pbar.set_description("{:.2f}".format(self.curr_evidence))
                     
-                    # this technique can be used in sgd methods
-                    for p in self.kernel.parameters():
-                        p.data.clamp_(0)
+                    loss_history.append(loss.item())
+                    if len(loss_history) > 300:
+                        loss_history.pop(0)
+                        
+                        if np.abs(np.mean(loss_history[:150]) - np.mean(loss_history[150:])) < adam_tolerance:
+                            stop_flag = True
+                        
+                    if self.evidence_evaluate_counter % 100 == 0:
+                        print("Step: ", self.evidence_evaluate_counter, "Current evidence: %.2f" % evidence.item())
                 
             self.kernel.eval()
             self.kernel.stop_autograd()
@@ -89,12 +109,12 @@ class ExactGPR(Regression):
         diagonal_term = th.log(th.diagonal(self.L, dim1=1, dim2=2)).sum(dim=1)
         evidence = - 0.5 * th.einsum("ijk,ijk->i", Y, self.alpha) - diagonal_term - n / 2 * th.log(2*th.tensor([th.pi]).to(device))
         evidence = evidence.sum(axis=-1)
-        print("The evidence is: ", evidence)
+        print("The evidence is: %.2f" % evidence.item())
         del K, u, evidence
         th.cuda.empty_cache()
         
     @staticmethod
-    def evidence(kernel, X, Y):
+    def evidence(kernel, X, Y, channel_process="mean"):
         n = X.shape[0]
         m = Y.shape[1] # output dimension
 
@@ -115,7 +135,10 @@ class ExactGPR(Regression):
         # Y (ny, n, 1), alpha (ny, n, 1), L (ny, n, n)
         diagonal_term = th.log(th.diagonal(L, dim1=1, dim2=2)).sum(dim=1)
         evidence = - 0.5 * th.einsum("ijk,ijk->i", Y, alpha) - diagonal_term - n / 2 * th.log(2*th.tensor([th.pi]).to(device))
-        evidence = evidence.sum(axis=-1)
+        if channel_process == "sum":
+            evidence = evidence.sum(axis=-1)
+        elif channel_process == "mean":
+            evidence = evidence.mean(axis=-1)
         del K, u, alpha, L, diagonal_term
         th.cuda.empty_cache()
         return evidence
@@ -131,7 +154,7 @@ class ExactGPR(Regression):
         mean = th.einsum("ijk,ikb->ji", k, self.alpha)
         if return_var:
             k = k.permute(0,2,1)
-            v = th.triangular_solve(k, self.L, upper=False)[0] # (ny, n, n_*)
+            v = th.linalg.solve_triangular(self.L, k, upper=False) # (ny, n, n_*)
             v = v.permute(2, 0, 1) # (n_*, ny, n)
             prior_std = self.kernel(x,x,diag=True) # the diag in kernel base class changed. (ny, n_*)
             var = prior_std.T - th.einsum("ijk,ijk->ij", v, v)
@@ -171,7 +194,7 @@ if __name__ == "__main__":
         th.from_numpy(X).to(device), th.from_numpy(Y).to(device)
     
     # train
-    gpr.fit(Xtrain, Ytrain, call_hyper_opt=True, lr=1e-3, epoch=2000, optimizer_type="Adam", batch_size=60)
+    gpr.fit(Xtrain, Ytrain, call_hyper_opt=True, solver="Adam")
     print( list(gpr.kernel.parameters()) )
     import time
     s = time.time()

@@ -39,7 +39,7 @@ class VariationalEMSparseGPR(Regression):
         
     def fit(self, X, Y, m, 
             subsetNum=500, 
-            lr=5e-3,
+            lr=1e-2,
             stop_criterion=1e-4,
             no_max_step=False,
             no_exp_step=False):

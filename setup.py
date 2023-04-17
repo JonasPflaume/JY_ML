@@ -1,5 +1,4 @@
-import sys
-from setuptools import find_packages, setup, Command
+from setuptools import setup
 
 # Package Metadata
 NAME = "jymlctr"
@@ -16,7 +15,6 @@ REQUIRED = [
     "matplotlib", 
     "torch",
     "gym==0.21.0",
-    "sklearn",
     "stable-baselines3",
     "gpytorch",
     "casadi",
