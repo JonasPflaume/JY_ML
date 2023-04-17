@@ -26,7 +26,7 @@ The gym **pendulum** environment is chosen to be the benchmark of control projec
 
 | Optimization      | remark           |
 | ------------- |:-------------:|
-|   Augmented Lagrangian    |  high-performance through numba  |
+|   Augmented Lagrangian    |  implemented by numba  |
 
 ### Finished comparison:
 #### Supervised learning  
@@ -34,7 +34,7 @@ The gym **pendulum** environment is chosen to be the benchmark of control projec
 | ------------- |:-------------:|
 | VIGPR<sup>6 </sup>	|   2.879	|
 | Ridge + polynomial      | 1.199 |
-|vRVM + polynomial | similar to ridge|
+| vRVM + polynomial | similar to ridge|
 | MLP      | 1.469      |
 | ... |       |
 #### Control  
