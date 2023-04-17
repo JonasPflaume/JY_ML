@@ -33,7 +33,8 @@ The gym **pendulum** environment is chosen to be the benchmark of control projec
 | Approach      | MSE           |
 | ------------- |:-------------:|
 | VIGPR<sup>6 </sup>	|   2.879	|
-| Ridge + feature      | 1.199 |
+| Ridge + polynomial      | 1.199 |
+|vRVM + polynomial | similar to ridge|
 | MLP      | 1.469      |
 | ... |       |
 #### Control  
