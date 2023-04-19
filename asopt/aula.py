@@ -181,7 +181,7 @@ if __name__ == "__main__":
     # not necessarily use 
     res = constrained_opt_solve(problem.getInitializationSample(),
                                 problem.evaluate,
-                                problem.getFeatureTypes(), verbose=True)
+                                problem.getFeatureTypes(), verbose=False)
     s = time()
 
     res = constrained_opt_solve(problem.getInitializationSample(),

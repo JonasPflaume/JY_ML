@@ -2,7 +2,10 @@ from setuptools import setup
 
 # Package Metadata
 NAME = "jymlctr"
-DESCRIPTION = "jiayun's machine learning & control packages"
+DESCRIPTION = "jiayun's machine learning & control packages. \
+                aslearn:    machine learning packages\
+                asctr:      control packages\
+                asopt:      optimization algorithms packages"
 URL = ""
 EMAIL = "li.jiayun@outlook.com"
 AUTHOR = "Jiayun Li"

@@ -149,7 +149,7 @@ class VariationalEMSparseGPR(Regression):
 
         param = list(self.kernel.parameters()) + list(self.white_kernel.parameters())
         
-        optimizer = LBFGS(params=param, lr=lr, max_iter=200, tolerance_change=stop_criterion)
+        optimizer = LBFGS(params=param, lr=lr, max_iter=40, tolerance_change=stop_criterion)
                 
         self.elbo_sum = -float("inf")
         def closure():

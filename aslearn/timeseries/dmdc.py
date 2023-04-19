@@ -103,7 +103,7 @@ if __name__ == "__main__":
     ''' EDMDc example
     '''
     import matplotlib.pyplot as plt
-    from aslearn.timeseries.utils import collect_rollouts
+    from aslearn.common_utils.rollouts import collect_rollouts
     from asctr.system import Pendulum
     from aslearn.feature.bellcurve import BellCurve
     from collections import OrderedDict

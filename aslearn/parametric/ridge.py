@@ -28,8 +28,8 @@ class RidgeReg(Regression):
                 if k == K-1:
                     val_index = K_index[k*K_len:]
                 train_index = torch.from_numpy(np.setdiff1d(K_index.numpy(), val_index.numpy()))
-                X_train, Y_train = X[train_index].to(device), Y[train_index].to(device)
-                X_val, Y_val = X[val_index].to(device), Y[val_index].to(device)
+                X_train, Y_train = X[train_index], Y[train_index]
+                X_val, Y_val = X[val_index], Y[val_index]
                 I_diag = torch.eye(X_train.shape[1]).to(device) * labd
                 I_diag[0,0] = 0.
                 weight = torch.inverse(X_train.T @ X_train + I_diag) @ X_train.T @ Y_train

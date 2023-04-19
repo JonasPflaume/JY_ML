@@ -7,7 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from aslearn.parametric.mlp import MLP
-from aslearn.timeseries.utils import collect_rollouts
+from aslearn.common_utils.rollouts import collect_rollouts
 
 from tqdm import tqdm
 from collections import OrderedDict

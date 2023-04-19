@@ -40,7 +40,7 @@ class VRVM(Regression):
         self.meanN = th.zeros(ny, nx).to(device).double()
         self.covarianceN = th.zeros(ny, nx, nx).to(device).double()
         
-    def fit(self, X, Y, tolerance=1e-5):
+    def fit(self, X, Y, tolerance=1e-5, max_inter_num=1500):
         '''
         '''
         # number of data, feature dimension
@@ -85,10 +85,10 @@ class VRVM(Regression):
             mean_temp = E_beta * mean_temp
             mean_change = mean_temp - meanN
             curr_tolerance_criterion = (th.abs( mean_change ).sum() / th.numel( mean_change )).item()
-            if curr_tolerance_criterion  < tolerance:
+            if curr_tolerance_criterion  < tolerance or step_counter > max_inter_num:
                 stop_flag = True
 
-            meanN = mean_temp.clone()
+            meanN = mean_temp
             
             # update q(alpha)
             gamma_aN = self.gamma_a0 + 0.5
@@ -107,14 +107,14 @@ class VRVM(Regression):
             # print(meanN[0]) #print the weight out, you can check most weights are pushing to zero: very sparse model
         
         # update global parameters
-        self.gamma_aN = gamma_aN.clone()
-        self.gamma_bN = gamma_bN.clone()
-        self.gamma_cN = gamma_cN.clone()
-        self.gamma_dN = gamma_dN.clone()
+        self.gamma_aN = gamma_aN
+        self.gamma_bN = gamma_bN
+        self.gamma_cN = gamma_cN
+        self.gamma_dN = gamma_dN
         
         self.expect_beta_inv = gamma_dN / gamma_cN # (ny,1)
-        self.mN = meanN.clone() # (ny,nx)
-        self.SN = covarianceN.clone() # (ny,nx,nx)
+        self.mN = meanN # (ny,nx)
+        self.SN = covarianceN # (ny,nx,nx)
         print("coordinate decent completed: ", step_counter, " steps.")
         return self
     

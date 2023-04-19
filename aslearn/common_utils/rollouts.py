@@ -1,6 +1,4 @@
 import numpy as np
-import os
-from aslearn.parametric.mlp import MLP
 
 def collect_rollouts(system, num, traj_len):
     ''' sin wave stimulation

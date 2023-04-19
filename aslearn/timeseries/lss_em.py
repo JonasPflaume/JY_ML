@@ -25,12 +25,12 @@ class LSS_Param(nn.Module):
         super().__init__()
         ## give it a reasonable initialization ##
         
-        A = th.randn(dim_x, dim_x)*1e-5 + th.eye(dim_x)
-        B = th.randn(dim_x, dim_u)*1e-5
-        C = th.randn(dim_obs, dim_x)*1e-5
+        A = th.randn(dim_x, dim_x) * 1e-6
+        B = th.randn(dim_x, dim_u) * 1e-6
+        C = th.randn(dim_obs, dim_x) * 1e-6
         
-        Gamma_L = th.abs(th.randn(dim_x)) * 5
-        K_L = th.abs(th.randn(dim_obs)) * 5
+        Gamma_L = th.abs(th.randn(dim_x)) * 1e-6
+        K_L = th.abs(th.randn(dim_obs)) * 1e-6
 
         self.A = nn.parameter.Parameter(A)
         self.B = nn.parameter.Parameter(B)
@@ -39,8 +39,8 @@ class LSS_Param(nn.Module):
         self.K = nn.parameter.Parameter(K_L) # observation noise
         
         # initial state
-        P0_prior_L = th.abs(th.randn(dim_x)) * 5
-        x0_prior = th.randn(dim_x,1)
+        P0_prior_L = th.abs(th.randn(dim_x)) * 1e-6
+        x0_prior = th.randn(dim_x,1) * 1e-6
         
         self.P0_prior = nn.parameter.Parameter(P0_prior_L)
         self.x0_prior = nn.parameter.Parameter(x0_prior)
@@ -58,7 +58,7 @@ class LSS(object):
         
         dim_x = self.LSS_Param.A.shape[0]
         outloop_history = [float("inf")]
-        for _ in range(50):
+        for _ in range(100):
             with th.no_grad():
                 X_filtered, X_smoothed, X_cov = LSS.cholesky_smoothing(self.LSS_Param, X, U) # calc the belief
             for _ in range(100): # no need to centering, this number was hand tuned
@@ -171,12 +171,12 @@ class LSS(object):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     from asctr.system import Pendulum
-    from aslearn.timeseries.utils import collect_rollouts
+    from aslearn.common_utils.rollouts import collect_rollouts
     
     p = Pendulum()
     X_l, U_l = collect_rollouts(p, 1, 200)
     X, U = X_l[0], U_l[0]
-    X_noise, U = th.from_numpy(X + 2/np.max(X)*np.random.randn(*X.shape)).float(), th.from_numpy(U_l[0]).float()
+    X_noise, U = th.from_numpy(X + 0.4*np.random.randn(*X.shape)).float(), th.from_numpy(U_l[0]).float()
             
     lss_param = LSS_Param(dim_x=4, dim_u=1, dim_obs=2)
     lss = LSS(LSS_Param=lss_param)

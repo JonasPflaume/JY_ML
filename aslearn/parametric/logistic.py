@@ -55,14 +55,14 @@ class LogisticReg(Classification):
                     hessian[j*self.featureNum:(j+1)*self.featureNum, k*self.featureNum:(k+1)*self.featureNum] = \
                         hessian_block.clone()
                         
-            W_old = self.W.clone().view(-1,1)
+            self.W = self.W.view(-1,1)
             try:
                 # netwon step
-                W_new = W_old - th.linalg.pinv(hessian) @ gradient
+                self.W = self.W - th.linalg.pinv(hessian) @ gradient
                 # pinv is numerically more stable. Actually we should use line search here...
             except:
                 raise ValueError("Please tune the feature to make optimization well defined!")
-            self.W = W_new.view(self.classNum, self.featureNum)
+            self.W = self.W.view(self.classNum, self.featureNum)
             
             if th.linalg.norm(gradient) < 1e-9: # give it a small tolerance
                 # standard convergence criterion, check Boyd book part 3

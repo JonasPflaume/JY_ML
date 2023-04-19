@@ -34,13 +34,13 @@ def feature_polynomial(x, degree):
             start_ruler += np.sum(index_ruler)
             for index_ruler_i in range(F_dim):
                 index_ruler[index_ruler_i] = np.sum(index_ruler[index_ruler_i:])
-            
-        # print(X_i)
+
         # generate the feature
         for colum_index_x in range(F_dim):
             for colum_index_X_i in range(start_ruler, m):
                 
-                if colum_index_X_i < start_ruler + np.sum(index_ruler)-np.sum(index_ruler[colum_index_x:]):
+                if colum_index_X_i < start_ruler + \
+                    np.sum(index_ruler)-np.sum(index_ruler[colum_index_x:]):
                     continue
                 
                 temp = x[:,colum_index_x:colum_index_x+1]*X_i[:,colum_index_X_i:colum_index_X_i+1]
@@ -84,8 +84,8 @@ if __name__ == "__main__":
     print(feature_polynomial(X, 1))
     import time
     s = time.time()
-    # print(poly.fit_transform(X)[:,1:])
-    print(feature_polynomial(X, 5))
+    print(poly.fit_transform(X)[:,1:])
+    # print(feature_polynomial(X, 5))
     e = time.time()
     print(e-s)
     # print(feature_polynomial(X, 5))
