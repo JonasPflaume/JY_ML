@@ -1,6 +1,6 @@
 import numpy as np
 
-class DMDc:
+class EDMD:
     def __init__(self):
         ''' the <extended dynamic mode decomposition with control>
             for signal or time series prediction.
@@ -132,7 +132,7 @@ if __name__ == "__main__":
     # with open('train_data.pkl','rb') as f:
     #     X_l, U_l = pickle.load(f)
         
-    edmdc = DMDc()
+    edmdc = EDMD()
     A, B, C = edmdc.fit(X_l, U_l, f_l)
     
     # test

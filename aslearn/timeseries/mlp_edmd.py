@@ -82,7 +82,7 @@ class TripletsDataset(data.Dataset):
         x, x_shift, u = self.X_data[index], self.X_shift_data[index], self.U_data[index]
         return x, x_shift, u
 
-class MLPDMDc:
+class MLPEDMD:
     def __init__(self, hyperparameters:dict):
         '''
         '''
@@ -120,7 +120,7 @@ class MLPDMDc:
                 traj_Y_batch_lift = self.lifting_func(traj_Y_batch)
                 
                 traj_U_batch = traj_U_batch.to(device)
-                A, B = MLPDMDc.get_state_matrices(traj_X_batch, traj_Y_batch, traj_X_batch_lift, traj_Y_batch_lift, traj_U_batch) # A, B should be (xl, xl) and (xl, u), not a batch data
+                A, B = MLPEDMD.get_state_matrices(traj_X_batch, traj_Y_batch, traj_X_batch_lift, traj_Y_batch_lift, traj_U_batch) # A, B should be (xl, xl) and (xl, u), not a batch data
 
                 self.A = A
                 self.B = B
@@ -301,5 +301,5 @@ if __name__ == "__main__":
 
     hyper = {"layer":5, "nodes":[2,8,35,140,300], "actfunc":["ReLU", "ReLU", "ReLU", None]}
     
-    mlpdmdc = MLPDMDc(hyper)
+    mlpdmdc = MLPEDMD(hyper)
     mlpdmdc.fit(matrices_dataset, triplet_dataset, matrices_dataset_vali, 1e-4, 2000, '/home/jiayun/Desktop/MY_ML/jylearn/timeseries/runs')

@@ -1,6 +1,6 @@
 import numpy as np
-from aslearn.feature.features_backend import feature_one
-from aslearn.feature.features_backend import feature_polynomial
+# from aslearn.feature.features_backend import feature_polynomial
+from sklearn.preprocessing import PolynomialFeatures
 from abc import ABC
 
 class Feature(ABC):
@@ -11,14 +11,6 @@ class Feature(ABC):
     # NOTE:1 remember the jacobian should be a static jit function !
     # NOTE:2 enable enables concatenation, composition
     # NOTE:3 enable feature pop out, designed for sparse model! jacobian should be correct.
-
-class OneFT(Feature):
-    def __init__(self,):
-        ''' degree is the phase factor of trigonometric funcs.
-        '''
-        
-    def __call__(self, X):
-        return feature_one(X)
     
 class FourierFT(Feature):
     def __init__(self, degree):
@@ -47,9 +39,10 @@ class PolynomialFT(Feature):
     '''
     def __init__(self, degree=2):
         self.degree = degree
+        self.poly = PolynomialFeatures(degree=degree)
         
     def __call__(self, X):
-        return feature_polynomial(X, self.degree)
+        return self.poly.fit_transform(X)
     
 class SquareWaveFT(Feature):
     def __init__(self, frequencies):

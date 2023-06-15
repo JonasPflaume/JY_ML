@@ -38,7 +38,7 @@ class VariationalEMSparseGPR(Regression):
         self.white_kernel = white_kernle
         
     def fit(self, X, Y, m, 
-            subsetNum=500, 
+            subsetNum=50, 
             lr=1e-2,
             stop_criterion=1e-4,
             no_max_step=False,
@@ -153,20 +153,20 @@ class VariationalEMSparseGPR(Regression):
                 
         self.elbo_sum = -float("inf")
         def closure():
+            self.kernel.guarantee_non_neg_param()
+            self.white_kernel.guarantee_non_neg_param()
             optimizer.zero_grad()
             curr_elbo = VariationalEMSparseGPR.elbo(self.kernel, self.white_kernel, X, Y, Xm)
             curr_elbo = curr_elbo.sum()
             self.elbo_sum = curr_elbo.item()
             objective = -curr_elbo
             objective.backward()
-            for p in self.kernel.parameters():
-                p.data.clamp_(1e-8)
-        
-            for p in self.white_kernel.parameters():
-                p.data.clamp_(1e-8)
+
             return objective
         
         optimizer.step(closure)
+        self.kernel.guarantee_non_neg_param()
+        self.white_kernel.guarantee_non_neg_param()
                 
         return self.elbo_sum # return the mean elbo
                 
@@ -269,11 +269,10 @@ if __name__ == "__main__":
     th.manual_seed(0)
     
     l = np.ones([1, 2]) * 1.
-    sigma = np.array([1., 1.])
     c = np.array([0.3, 0.3])
     
     white_kernel = White(c=c, dim_in=1, dim_out=2)
-    kernel = RBF(sigma=sigma, l=l, dim_in=1, dim_out=2)
+    kernel = RBF(l=l, dim_in=1, dim_out=2)
     
     gpr = VariationalEMSparseGPR(kernel=kernel, white_kernle=white_kernel)
     

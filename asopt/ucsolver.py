@@ -33,10 +33,11 @@ def get_direction(J, H, verbose):
         # non-positive fall-back
         direction = - np.linalg.solve(H, grad)
     except:
+        print('--- PULLBACK ---')
         direction = - grad
         
     direction = np.ascontiguousarray(direction)
-    if np.any(grad.T @ direction > 0) or np.all(H == 0.):
+    if np.any(grad.T @ direction > 0):
         # wolfe-condition
         if verbose:
             print('--- PULLBACK ---')

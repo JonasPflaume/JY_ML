@@ -4,7 +4,7 @@ from numba import jit
 import numpy as np
 
 @jit(nopython=True)
-def aula_main(x0, lr, theta_tol, epsi_tol, uc_tolerance, evaluate, obj_idx, eq_idx, ineq_idx, verbose):
+def aula_main(x0, lr, theta_tol, epsi_tol, uc_tolerance, evaluate, obj_idx, eq_idx, ineq_idx, verbose, *args):
     ''' where the augmented lagrangian main loop defined 
     '''
     # initialize the parameters
@@ -19,9 +19,9 @@ def aula_main(x0, lr, theta_tol, epsi_tol, uc_tolerance, evaluate, obj_idx, eq_i
         if verbose:
             print("--- iteration " , i, " ---")
         # 1. solve the unconstrained optimization
-        x1 = aula_uc_main(x0, lr, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate, uc_tolerance, verbose)
+        x1 = aula_uc_main(x0, lr, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate, uc_tolerance, verbose, *args)
         # 2. update the parameters
-        phi, J = evaluate(x1, returnJ=True, returnH=False)
+        phi, J = evaluate(x1, True, False, *args)
         if ineq_idx.size > 0:
             g_x = phi[ineq_idx]
             labd = np.maximum(labd + 2.0 * mu * g_x, np.zeros_like(labd))
@@ -47,19 +47,21 @@ def aula_main(x0, lr, theta_tol, epsi_tol, uc_tolerance, evaluate, obj_idx, eq_i
         x0 = x1
         i += 1
 
-    return x1
+    return x1, phi[0,0]
 
 @jit(nopython=True)
-def btls_decrease(lr, curr_x, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate, direction, rho_ls=0.01, rho_a_de=0.5):
+def btls_decrease(lr, curr_x, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate, direction, *args):
+    rho_ls=0.01
+    rho_a_de=0.5
     while True:
         lhs_x = curr_x + lr * direction
-        temp = aula_evaluate(lhs_x, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate)
+        temp = aula_evaluate(lhs_x, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate, *args)
         lhs = temp[0]
-        temp = aula_evaluate(curr_x, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate)
+        temp = aula_evaluate(curr_x, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate, *args)
         rhs, J = temp[0], temp[1]
         grad = J.T
         rhs += rho_ls * grad.T @ (lr * direction)
-        if lr < 1e-16:
+        if lr < 1e-20:
             print("--- WARNING: Can't find a proper lr, breaking ---")
             break
         if lhs > rhs:
@@ -69,23 +71,24 @@ def btls_decrease(lr, curr_x, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, eva
     return lr
 
 @jit(nopython=True)
-def aula_uc_main(x0, lr, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate, uc_tolerance, verbose):
+def aula_uc_main(x0, lr, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate, uc_tolerance, verbose, *args):
     i = 0
     while True:
         # 1. get the update direction
-        temp = aula_evaluate(x0, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate)
+        temp = aula_evaluate(x0, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate, *args)
         phi, J, H = temp[0], temp[1], temp[2]
         
+        f_curr = phi[0,0]
         if verbose:
-            print("Step: ", i, " FuncVal: ", phi[0,0])
+            print("Step: ", i, " FuncVal: ", f_curr)
             print("lr: ", lr)
         direction = get_direction(J, H, verbose)
 
         # 2. run the BT linear search
-        lr = btls_decrease(lr, x0, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate, direction)
+        lr = btls_decrease(lr, x0, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate, direction, *args)
         
         # 4. break loop
-        if np.linalg.norm(lr*direction) < uc_tolerance:
+        if np.linalg.norm(lr*direction) < uc_tolerance or i >100:
             x1 = x0
             break
         # 3. update x
@@ -97,7 +100,7 @@ def aula_uc_main(x0, lr, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate
     return x1
 
 @jit(nopython=True)
-def aula_evaluate(x, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate):
+def aula_evaluate(x, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate, *args):
         ''' wrap the defined problem to get the aula needed phi, gradient and hessian
             input:
                     x0:     the current x value
@@ -115,7 +118,7 @@ def aula_evaluate(x, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate):
         J = np.zeros((1, x.shape[0]),dtype=np.float64)
         H = np.zeros((x.shape[0], x.shape[0]),dtype=np.float64)
 
-        temp = evaluate(x, returnJ=True, returnH=True)
+        temp = evaluate(x, True, True, *args)
         phi0, J0, H_f0 = temp[0], temp[1], temp[2]
 
         if ineq_idx.size > 0:
@@ -147,16 +150,17 @@ def aula_evaluate(x, mu, labd, v, kappa, obj_idx, eq_idx, ineq_idx, evaluate):
         assert J.shape[0] == 1
         return [phi, J, H]
     
-def constrained_opt_solve(x0, evaluate, problem_FT, theta_tol=1e-6, epsi_tol=1e-6, uc_tolerance=1e-6, verbose=False):
+def constrained_opt_solve(x0, evaluate, problem_FT, *args, theta_tol=1e-6, epsi_tol=1e-6, uc_tolerance=1e-6, verbose=False):
     '''
         Function-style programming enables jit.
         we aim to achieve a competitively high run speed.
         
         :param x0               initial x
+        :param args             optional args for evaluate function
         
         :param theta_tol        x tolerance                 defalt = 1e-6   
         :param epsi_tol         constraints tolerance       defalt = 1e-6   
-        :param uc_tolerance     unconstrained tolerance     defalt = 1e-6   
+        :param uc_tolerance     unconstrained tolerance     defalt = 1e-6
     '''
     
     lr = 1.
@@ -164,9 +168,10 @@ def constrained_opt_solve(x0, evaluate, problem_FT, theta_tol=1e-6, epsi_tol=1e-
     obj_idx = np.where(np.squeeze(problem_FT) == FT.obj)[0]
     eq_idx = np.where(np.squeeze(problem_FT) == FT.eq)[0]
     ineq_idx = np.where(np.squeeze(problem_FT) == FT.ineq)[0]
-    res = aula_main(x0, lr, theta_tol, epsi_tol, uc_tolerance, evaluate, obj_idx, eq_idx, ineq_idx, verbose)
-    
-    return res
+
+    res = aula_main(x0, lr, theta_tol, epsi_tol, uc_tolerance, evaluate, obj_idx, eq_idx, ineq_idx, verbose, *args)
+    x_opt, f_opt = res[0], res[1]
+    return x_opt, f_opt
 
 if __name__ == "__main__":
     from toyproblems import HalfCircle
@@ -181,12 +186,12 @@ if __name__ == "__main__":
     # not necessarily use 
     res = constrained_opt_solve(problem.getInitializationSample(),
                                 problem.evaluate,
-                                problem.getFeatureTypes(), verbose=False)
+                                problem.getFeatureTypes(), 2., verbose=True)
     s = time()
 
-    res = constrained_opt_solve(problem.getInitializationSample(),
+    x_opt, f_opt = constrained_opt_solve(problem.getInitializationSample(),
                                 problem.evaluate,
-                                problem.getFeatureTypes())
+                                problem.getFeatureTypes(), 2.)
     e = time()
-    print(res)
+    print(x_opt, f_opt)
     print("Time: {:.2f} ms".format((e-s)*1000))

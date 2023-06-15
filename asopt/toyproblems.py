@@ -17,12 +17,12 @@ class HalfCircle:
     
     @staticmethod
     @jit(nopython=True)
-    def evaluate(x, returnJ, returnH):
-
+    def evaluate(x, returnJ, returnH, *args):
+        square = args[0] # testing the parameter parsing
         x0, x1 = x[0,0], x[1,0]
         f = x0 - x1
         eq = x0
-        ineq = x0**2 + x1**2 - 1
+        ineq = x0**square + x1**square - 1
         phi = np.array([[f],[eq],[ineq]],dtype=np.float64)
 
         if not returnJ:
@@ -53,7 +53,8 @@ class Rosenbrock2D:
     
     @staticmethod
     @jit(nopython=True)
-    def evaluate(x, returnJ, returnH, a=1., b=100.):
+    def evaluate(x, returnJ, returnH, *args):# a=1., b=100.
+        a, b = args[0], args[1]
         x0, x1 = x[0,0], x[1,0]
         f = (a - x0) ** 2 + b * (x1 - x0 ** 2) ** 2
         phi = np.array([[f]],dtype=np.float64)

@@ -25,6 +25,7 @@ class Pendulum:
         self.J = 1/3 * self.m * self.l ** 2
         self.nx = 2
         self.nu = 1
+        self.k = 0.25
 
         self.continuous_nls, self.continuous_ls \
             = self.__init_sys()
@@ -35,7 +36,8 @@ class Pendulum:
         x = cs.SX.sym("x", 2)
         u = cs.SX.sym("u", 1)
         x1dot = x[1]
-        x2dot = 3*self.g / (2*self.l) * cs.sin(x[0]) + 3 / (self.m * self.l**2) * u
+        # x2dot = 3*self.g / (2*self.l) * cs.sin(x[0]) + 3 / (self.m * self.l**2) * u
+        x2dot = -self.g/self.l * cs.sin(x[0]) - self.k /self.m * x[1] + 1/(self.m * self.l**2) * self.J
         f = cs.vertcat(x1dot, x2dot)
         f_func = cs.Function("f_func", [x, u], [f])
         nl_sys = {'f': f_func}
