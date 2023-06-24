@@ -1,4 +1,4 @@
 ### JY's workspace
 
-I worked on this codebase for solving daily machine learning problems and new ideas.
+I work on this code base for solving everyday machine learning problems and pursuing new ideas.
   
