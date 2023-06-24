@@ -8,7 +8,7 @@ class FlexDMP:
         This DMP was implemented in vectorized form,
         unlike the implemented vanilla DMP
     '''
-    def __init__(self, bf_num, demo_len, demo_dt, p=2.5, w_factor=1.5, tau=1., dof=1, linear_decay=True): # p=23, w = 1.3 better for peak violation!
+    def __init__(self, bf_num, demo_len, demo_dt, p=2.5, w_factor=0.5, tau=1., dof=1, linear_decay=True): # p=23, w = 1.3 better for peak violation!
         '''
         bf_num:     The number of Psi activation points
         demo_len:   The length of the trajectory
@@ -169,7 +169,7 @@ class FlexDMP:
     
 if __name__ == "__main__":
     # example
-    X = np.linspace(0., 6.28, 100)
+    X = np.linspace(0., 6.28, 101)
     Y = np.sin(X) + np.cos(0.5*X) + np.cos(2*X)
     dY = np.cos(X) - 0.5*np.sin(0.5*X) - 2*np.sin(2*X)
     ddY = -np.sin(X) - 0.25*np.cos(0.5*X) - 4*np.cos(2*X)
@@ -178,22 +178,83 @@ if __name__ == "__main__":
     ddY = ddY.reshape(-1,1)
     
     import matplotlib.pyplot as plt
+    from scipy.interpolate import CubicSpline
     
-    dmp = FlexDMP(20, len(X), 6.28/100)
+    dmp = FlexDMP(25, len(X), 6.28/101)
     dmp.get_weights(y_demo=Y, dy_demo=dY, ddy_demo=ddY)
     Y_, dY_, ddY_ = dmp.trajectory()
-    plt.figure(figsize=[7,10])
-    plt.subplot(311)
-    plt.plot(X, Y, '-.r')
-    plt.plot(X, Y_, '-b')
+    Y_bundle, dY_bundle, ddY_bundle = [], [], []
+    for i in range(20):
+        dmp.get_weights(y_demo=Y, dy_demo=dY, ddy_demo=ddY)
+        dmp.weights += 0.05 * np.max(dmp.weights, axis=1) * np.random.randn(*dmp.weights.shape)
+        Y_i, dY_i, ddY_i = dmp.trajectory()
+        Y_bundle.append(Y_i)
+        dY_bundle.append(dY_i)
+        ddY_bundle.append(ddY_i)
+        
+    spl = CubicSpline(X[::4], Y[::4])
+    Y_spl = spl(X)
+    dY_spl = spl(X, nu=1)
+    ddY_spl = spl(X, nu=2)
+    Ys_bundle, dYs_bundle, ddYs_bundle = [], [], []
+    for i in range(20):
+        target = (0.05 * np.max(Y[::4], axis=0) * np.random.randn(*Y[::4].shape)).reshape(*Y[::4].shape) + Y[::4]
+        spl = CubicSpline(X[::4], target)
+        Ys_i = spl(X)
+        dYs_i = spl(X,nu=1)
+        ddYs_i = spl(X,nu=2)
+        Ys_bundle.append(Ys_i)
+        dYs_bundle.append(dYs_i)
+        ddYs_bundle.append(ddYs_i)
+        
+    def plot_bundle(Y):
+        for yi in Y:
+            plt.plot(X, yi, '-c', alpha=0.15)
+            
+    plt.figure(figsize=[10,7])
+    plt.subplot(321)
+    plt.title("DMP3: 20 RBFs")
+    plt.plot(X, Y, '-.r', linewidth=2.0, label="GT")
+    plt.plot(X, Y_, '-b', linewidth=2.0, label="Pred")
+    plot_bundle(Y_bundle)
+    plt.ylabel("joint angle [rad]")
     plt.grid()
-    plt.subplot(312)
-    plt.plot(X, dY, '-.r')
-    plt.plot(X, dY_, '-b')
+    plt.legend()
+    plt.subplot(323)
+    plt.plot(X, dY, '-.r', linewidth=2.0)
+    plt.plot(X, dY_, '-b', linewidth=2.0)
+    plot_bundle(dY_bundle)
+    plt.ylabel("joint velocity [rad/s]")
     plt.grid()
-    plt.subplot(313)
-    plt.plot(X, ddY, '-.r')
-    plt.plot(X, ddY_, '-b')
+    plt.subplot(325)
+    plt.plot(X, ddY, '-.r', linewidth=2.0)
+    plt.plot(X, ddY_, '-b', linewidth=2.0)
+    plot_bundle(ddY_bundle)
+    plt.xlabel("time [s]")
+    plt.ylabel("joint acc [rad/s^2]")
     plt.grid()
+    
+    ### spline
+    plt.subplot(322)
+    plt.title("Cubic Spline: 20 via points")
+    plt.plot(X, Y, '-.r', linewidth=2.0)
+    plt.plot(X, Y_spl, '-b', linewidth=2.0)
+    plot_bundle(Ys_bundle)
+
+    plt.grid()
+    plt.subplot(324)
+    plt.plot(X, dY, '-.r', linewidth=2.0)
+    plt.plot(X, dY_spl, '-b', linewidth=2.0)
+    plot_bundle(dYs_bundle)
+
+    plt.grid()
+    plt.subplot(326)
+    plt.plot(X, ddY, '-.r', linewidth=2.0)
+    plt.plot(X, ddY_spl, '-b', linewidth=2.0)
+    plot_bundle(ddYs_bundle)
+    plt.xlabel("time [s]")
+    plt.grid()
+    
     plt.tight_layout()
+    plt.savefig("/home/jiayun/Desktop/comparison.jpg", dpi=150)
     plt.show()

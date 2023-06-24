@@ -168,11 +168,11 @@ class Kernel(nn.Module):
         with th.no_grad():
             for name, param in self.named_parameters():
                 if "white" in name:
-                    total_white_noise += param.detach()
+                    total_white_noise += param
         if type(total_white_noise) == float:
             return total_white_noise
         else:
-            white_noise = total_white_noise.unsqueeze(axis=0).repeat(n,1)
+            white_noise = total_white_noise.unsqueeze(axis=1).repeat(1,n)
             return white_noise
         
     def guarantee_non_neg_param(self,):
@@ -242,7 +242,7 @@ class RBF(Kernel):
 
         theta = param
         # sigma = theta[:output_dim].view(output_dim, 1, 1)
-        l = theta.view(input_dim, output_dim).unsqueeze(0) # (1,nx, ny)
+        l = theta.view(input_dim, output_dim).unsqueeze(0) # (1, nx, ny)
         
         if diag:
             assert x.shape == y.shape, "they must be the same input data!"

@@ -146,41 +146,4 @@ class VRVM(Regression):
             return mean, var
         else:
             return mean
-        
-    @staticmethod
-    def active_data_inquiry(degree, SN, box_cons, AL_obj, AL_jac, K=10):
-        ''' designed for polynomial active learning
-        '''
-        SN = np.ascontiguousarray(SN)
-        x_his = []
-        f_his = []
-        bounds = []
-        for i in range(box_cons.shape[1]):
-            bounds.append((box_cons[0,i], box_cons[1,i]))
-        bounds = tuple(bounds)
-        for _ in range(K):
-            # print("Hi!")
-            x0 = np.random.uniform(box_cons[0], box_cons[1])
-            res_i = minimize(fun=AL_obj, x0=x0, method='L-BFGS-B', jac=AL_jac, args=(degree, SN), bounds=bounds)
-            
-            x_his.append(res_i.x)
-            f_his.append(res_i.fun)
-            
-        opt_index = np.argmin(f_his)
-        x_opt = x_his[opt_index]
-        return x_opt
-
-
-# @jit(nopython=True)
-# def polynomialAL_hess(x, degree, SN):
-#     x = x.reshape(1,-1)
-#     ny = SN.shape[0]
-
-#     poly_J = polynomial_jacobian(x, degree)
-#     poly_J = np.ascontiguousarray(poly_J)
-#     H = np.zeros((x.shape[1], x.shape[1]), dtype=np.float64)
-#     for i in range(ny):
-#         H += - poly_J.T @ SN[i] @ poly_J
-    
-#     return H
     

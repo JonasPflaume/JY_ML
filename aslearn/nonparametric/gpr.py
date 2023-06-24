@@ -46,8 +46,8 @@ class ExactGPR(Regression):
             if solver == "LBFGS":
                 optimizer = LBFGS(params=self.kernel.parameters(), 
                                     lr=1, 
-                                    max_iter=1000, 
-                                    tolerance_change=1e-12,
+                                    max_iter=1000,
+                                    tolerance_change=1e-4,
                                     line_search_fn="strong_wolfe")
                 
                 self.curr_evidence = evidence
@@ -214,9 +214,9 @@ class ExactGPR(Regression):
         return x_opt
         
 if __name__ == "__main__":
-    # test
+    # test 1
     import matplotlib.pyplot as plt
-    from aslearn.kernel.kernels import RBF, White, Matern, DotProduct, RQK, Constant
+    from aslearn.kernel.kernels import RBF, White
     import numpy as np
     from torch.nn import MSELoss
     Loss = MSELoss()
@@ -273,3 +273,48 @@ if __name__ == "__main__":
     plt.legend()
     plt.tight_layout()
     plt.show()
+    
+    # test 2
+    # l = np.ones([2, 2]) * 1.5
+    # c = np.array([0.1, 0.1])
+    
+    # kernel = White(c=c, dim_in=2, dim_out=2) + RBF(l=l, dim_in=2, dim_out=2)
+    # gpr = ExactGPR(kernel=kernel)
+    
+    # X = np.array([[1,-1],[-1, 1.]])
+    # Y = np.array([[np.cos(1),np.sin(-1)],[np.cos(-1), np.sin(1)]])
+    # X_, Y_ = th.from_numpy(X).to(device), th.from_numpy(Y).to(device)
+    # gpr.fit(X_,Y_,call_hyper_opt=1)
+    
+    # Xtest = np.concatenate([np.linspace(-2,2,20).reshape(-1,1),np.linspace(-2,2,20).reshape(-1,1)],axis=1)
+    # Xtest_ = th.from_numpy(Xtest).to(device)
+    # pred, var = gpr.predict(Xtest_, return_var=True)
+    # pred = pred.detach().cpu().numpy()
+    # var = var.detach().cpu().numpy()
+    
+    # from sklearn.gaussian_process import GaussianProcessRegressor
+    # from sklearn.gaussian_process.kernels import RBF, WhiteKernel
+    # kernel = RBF() + WhiteKernel()
+    # gpr = GaussianProcessRegressor(kernel=kernel).fit(X, Y)
+    # pred1, var1 = gpr.predict(Xtest, return_std=True)
+    
+    # plt.subplot(211)
+    # plt.plot(Xtest[:,0], pred[:,0],'c')
+    # plt.plot(Xtest[:,0], pred[:,0]+var[:,0],'-.c')
+    # plt.plot(Xtest[:,0], pred[:,0]-var[:,0],'-.c')
+    # plt.plot(Xtest[:,0], np.cos(Xtest[:,0]))
+    
+    # plt.plot(Xtest[:,0], pred1[:,0], 'b')
+    # plt.plot(Xtest[:,0], pred1[:,0]+var1,'-.b')
+    # plt.plot(Xtest[:,0], pred1[:,0]-var1,'-.b')
+    
+    # plt.subplot(212)
+    # plt.plot(Xtest[:,1], pred[:,1], 'c')
+    # plt.plot(Xtest[:,1], pred[:,1]+var[:,1],'-.c')
+    # plt.plot(Xtest[:,1], pred[:,1]-var[:,1],'-.c')
+    # plt.plot(Xtest[:,1], np.sin(Xtest[:,1]))
+    
+    # plt.plot(Xtest[:,1], pred1[:,1], 'b')
+    # plt.plot(Xtest[:,1], pred1[:,1]+var1,'-.b')
+    # plt.plot(Xtest[:,1], pred1[:,1]-var1,'-.b')
+    # plt.show()

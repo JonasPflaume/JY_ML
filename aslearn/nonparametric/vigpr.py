@@ -82,7 +82,7 @@ class VariationalEMSparseGPR(Regression):
                 th.cuda.empty_cache()
         
         if no_max_step or no_exp_step:
-            curr_mean_elbo = self.hyper_optimization(X, Y, inducing_var_index, lr, stop_criterion)
+            curr_mean_elbo = self.hyper_optimization(X, Y, inducing_var_index, lr, stop_criterion, max_iter=500)
             print("Current elbo: {:.2f}".format(curr_mean_elbo))
 
         # prepare parameters for the prediction
@@ -112,7 +112,8 @@ class VariationalEMSparseGPR(Regression):
 
         self.kernel.eval()
         self.white_kernel.eval()
-        return inducing_var_index
+        
+        return self
         
     def predict(self, x, return_var=False):
         ''' 
@@ -136,7 +137,7 @@ class VariationalEMSparseGPR(Regression):
             return mean.T, var.T
         return mean.T
     
-    def hyper_optimization(self, X, Y, inducing_var_index, lr, stop_criterion):
+    def hyper_optimization(self, X, Y, inducing_var_index, lr, stop_criterion, max_iter=40):
         ''' maximization step
         '''
         Xm = []
@@ -149,7 +150,7 @@ class VariationalEMSparseGPR(Regression):
 
         param = list(self.kernel.parameters()) + list(self.white_kernel.parameters())
         
-        optimizer = LBFGS(params=param, lr=lr, max_iter=40, tolerance_change=stop_criterion)
+        optimizer = LBFGS(params=param, lr=lr, max_iter=max_iter, tolerance_change=stop_criterion)
                 
         self.elbo_sum = -float("inf")
         def closure():
@@ -287,7 +288,7 @@ if __name__ == "__main__":
         th.from_numpy(X).to(device), th.from_numpy(Y).to(device)
     
     # train
-    ind = gpr.fit(Xtrain, Ytrain, m=13, subsetNum=200, lr=1e-2)
+    gpr.fit(Xtrain, Ytrain, m=13, subsetNum=200, lr=1e-2)
     
     import time
     s = time.time()
@@ -306,7 +307,7 @@ if __name__ == "__main__":
     plt.plot(X, mean[:,0] + 1.96*var[:,0], '-.r', label="var")
     plt.plot(X, mean[:,0] - 1.96*var[:,0], '-.r')
     plt.plot(X, Y[:,0], label="GroundTueth")
-    plt.plot(Xtrain[ind[0]], Ytrain[ind[0],0], 'c*')
+    # plt.plot(Xtrain[ind[0]], Ytrain[ind[0],0], 'c*')
     plt.plot(Xtrain, Ytrain[:,0], 'rx', label="data", alpha=0.3)
     plt.grid()
     plt.ylabel("Output 1")
@@ -316,7 +317,7 @@ if __name__ == "__main__":
     plt.plot(X, mean[:,1] + 1.96*var[:,1], '-.r', label="var")
     plt.plot(X, mean[:,1] - 1.96*var[:,1], '-.r')
     plt.plot(X, Y[:,1], label="GroundTueth")
-    plt.plot(Xtrain[ind[1]], Ytrain[ind[1], 1], 'c*')
+    # plt.plot(Xtrain[ind[1]], Ytrain[ind[1], 1], 'c*')
     plt.plot(Xtrain, Ytrain[:,1], 'rx', label="data", alpha=0.3)
 
     plt.grid()

@@ -6,13 +6,13 @@ from scipy.optimize import minimize
 device = "cuda" if th.cuda.is_available() else "cpu"
 
 class BSEDMD_1:
-    ''' Bayesian shrinkage EDMD
+    ''' Bayesian shrinkage EDMD through mean-field VI
     '''
     def __init__(self,) -> None:
         '''
         '''
         
-    def __init_params(self, nx, ny):
+    def __init_params(self, nx, ny, prior_impact_factor):
         ''' initialize the variational parameters to make the re-training starts warmly.
         '''
         # initialize model parameter
@@ -38,24 +38,25 @@ class BSEDMD_1:
             self.n_2N = th.ones(1,).to(device).double()
         
         # priors
-        self.V_1_inv = 2*th.eye(nx)
-        # self.V_1_inv = (self.V_1_inv@self.V_1_inv.T  + th.eye(nx) * 1e-4)
+        # self.V_1_inv = th.randn(nx,nx)
+        # self.V_1_inv = 1/100*self.V_1_inv@self.V_1_inv.T
+        self.V_1_inv = prior_impact_factor*th.eye(nx)
         self.V_1_inv = self.V_1_inv.to(device).double()
-        self.n_1 = (nx) * th.ones(1,).to(device).double()
+        self.n_1 = nx*th.ones(1,).to(device).double()
         
-        # self.V_2_inv = 0.1*th.eye(ny).to(device).double()
-        self.V_2_inv = 1e-1*th.eye(ny)
-        # self.V_2_inv = (self.V_2_inv@self.V_2_inv.T  + th.eye(ny) * 1e-4)
+        # self.V_2_inv = th.randn(ny,ny)
+        self.V_2_inv = prior_impact_factor*th.eye(ny)
+        # self.V_2_inv = 1/4 * self.V_2_inv @ self.V_2_inv.T
         self.V_2_inv = self.V_2_inv.to(device).double()
-        self.n_2 = (ny) * th.ones(1,).to(device).double() # may cause error
+        self.n_2 = ny*th.ones(1,).to(device).double() # may cause error
     
-    def fit(self, X, Y, max_inter_num=1000, tolerance=1e-9, no_opt=False):
+    def fit(self, X, Y, max_inter_num=5000, tolerance=1e-9, no_opt=False, prior_impact_factor=2):
         self.nx = X.shape[1]
         self.ny = Y.shape[1]
         self.N = X.shape[0]
         assert len(X)==len(Y), "the time series data should have the same length"
         
-        self.__init_params(self.nx, self.ny)
+        self.__init_params(self.nx, self.ny, prior_impact_factor=prior_impact_factor)
         # prepare fix parameters
         YTX = Y.T @ X
         XTX = X.T @ X
@@ -78,7 +79,7 @@ class BSEDMD_1:
             # update
             mean_variation = th.abs(self.M_N - M_N).sum() / self.nx*self.ny
 
-            if step_counter % 100 == 0:
+            if step_counter % 10 == 0:
                 print("step: ", step_counter, " tolerance: {:.2E}".format(Decimal(mean_variation.detach().cpu().item())))
             if mean_variation < tolerance or step_counter > max_inter_num or no_opt==True:
                 stop_flag = True
@@ -210,44 +211,7 @@ class BSEDMD_1:
         
         trajs = np.concatenate(trajs)
         vars = np.concatenate(vars)
-        return trajs, vars
-    
-    @staticmethod
-    def active_data_inquiry(predictor, feature_func_list, box_cons, K=10):
-        ''' designed for polynomial active learning
-        '''
-        def feature_func(x):
-            temp = x
-            for func in feature_func_list:
-                temp = func(temp)
-            return temp
-        
-        def AL_obj(x):
-            x_f = x.reshape(1,-1)
-            x_f = feature_func(x_f)
-            X_t = th.from_numpy(x_f).to(device).double()
-            _, var = predictor.predict(X_t, return_var=True)
-            entropy = th.log(th.det(var[0,:,:])).detach().cpu().numpy()
-            return -entropy
-            
-        x_his = []
-        f_his = []
-        bounds = []
-        for i in range(box_cons.shape[1]):
-            bounds.append((box_cons[0,i], box_cons[1,i]))
-        bounds = tuple(bounds)
-        for _ in range(K):
-            # print("Hi!")
-            x0 = np.random.uniform(box_cons[0], box_cons[1])
-            res_i = minimize(fun=AL_obj, x0=x0, method='L-BFGS-B', bounds=bounds)
-            
-            x_his.append(res_i.x)
-            f_his.append(res_i.fun)
-            
-        opt_index = np.argmin(f_his)
-        x_opt = x_his[opt_index]
-        return x_opt
-            
+        return trajs, vars    
 
 from aslearn.parametric.vrvm import VRVM
 
@@ -294,6 +258,7 @@ class BSEDMD_2(VRVM):
         trajs = np.concatenate(trajs)
         vars = np.concatenate(vars)
         return trajs, vars
+    
     
 if __name__ == "__main__":
 
@@ -399,15 +364,15 @@ if __name__ == "__main__":
     # prepare the data
     from aslearn.feature.global_features import PolynomialFT, FourierFT
     import matplotlib.pyplot as plt
-    X = np.linspace(-15,15,300)[:,np.newaxis]
+    X = np.linspace(-15,15,200)[:,np.newaxis]
     sw1 = 0.5*np.sin(1.5*np.pi*0.8*X) - 1.2*np.cos(1.5*np.pi*0.4*X)
-    sw2 = 0.5*np.cos(1.5*np.pi*0.8*X) + 1.2*np.sin(1.5*np.pi*0.4*X)
+    sw2 = 0.5*np.cos(1.5*np.pi*0.8*X) + 1.5*np.sin(1.5*np.pi*0.4*X)
     sw3 = np.sin(2*np.pi*0.4*X)
-    Y = np.concatenate([sw1, sw2, sw3], axis=1) + np.random.randn(300,3) * 0.2
+    Y = np.concatenate([sw1, sw2, sw3], axis=1) + np.random.randn(200,3) * 0.3
 
     poly = PolynomialFT(degree=2)
     # sqw = SquareWaveFT(frequencies=np.linspace(0.1,10,100))
-    fri = FourierFT(degree=np.linspace(0.1,50,20))
+    fri = FourierFT(degree=np.linspace(1,50,10))
 
     X_max = np.max(X, axis=0)
     ## normalizing the input is crucial for this framework!

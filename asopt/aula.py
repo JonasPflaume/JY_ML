@@ -1,7 +1,30 @@
 from asopt.base import FT
-from asopt.ucsolver import get_direction, btls_increase
 from numba import jit
 import numpy as np
+
+@jit(nopython=True)
+def btls_increase(lr, rho_a_in=1.2, sigmax=1.):
+    increased_lr = np.min(np.array([lr * rho_a_in, sigmax]))
+    return increased_lr
+
+@jit(nopython=True)
+def get_direction(J, H, verbose):
+    grad = J.T
+    try:
+        # non-positive fall-back
+        direction = - np.linalg.solve(H, grad)
+    except:
+        print('--- PULLBACK ---')
+        direction = - grad
+        
+    direction = np.ascontiguousarray(direction)
+    if np.any(grad.T @ direction > 0):
+        # wolfe-condition
+        if verbose:
+            print('--- PULLBACK ---')
+        direction = -grad
+
+    return direction
 
 @jit(nopython=True)
 def aula_main(x0, lr, theta_tol, epsi_tol, uc_tolerance, evaluate, obj_idx, eq_idx, ineq_idx, verbose, *args):
