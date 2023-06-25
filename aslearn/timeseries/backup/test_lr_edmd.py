@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 device = "cuda" if th.cuda.is_available() else "cpu"
 
 P = Pendulum()
-traj_num = 100
+traj_num = 10
 traj_len = 100
 X_l, U_l = collect_rollouts(P, num=traj_num, traj_len=traj_len)
 
@@ -24,7 +24,7 @@ for i in range(vali_num):
     
 x_dim = X.shape[2]
 
-bell = BellCurve(degree=100).fit(X.reshape(-1,x_dim))
+bell = BellCurve(degree=200).fit(X.reshape(-1,x_dim))
 
 X_later = X[:,1:,:].reshape(-1, x_dim)
 X_input = X[:,:-1,:].reshape(-1, x_dim)
