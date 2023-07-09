@@ -8,10 +8,10 @@ print("--------individual test--------")
 # RBF
 print("--------RBF--------")
 # use scalar situation to test the broadcasting of different input-output dimensions
-for dim_in in range(1,100,10):
-    for dim_out in range(1,100,10):
-        for l in th.linspace(0.1,50,10):
-            for c in th.linspace(0.1,50,10):
+for dim_in in range(1,100,5):
+    for dim_out in range(1,100,5):
+        for l in th.linspace(0.1,50,5):
+            for c in th.linspace(0.1,50,5):
                 kernel = RBF(dim_in=dim_in, dim_out=dim_out, l=l.item(), c=c.item())
                 X = th.randn(10, dim_in).double().to(device)
                 Y = th.randn(10, dim_in).double().to(device)
@@ -34,18 +34,19 @@ kernel2 = White(dim_in=2,dim_out=1)
 kernel3 = RBF(dim_in=2,dim_out=1)
 kernel_c1 = kernel1 * kernel3 + kernel2
 kernel_c2 = kernel1 + kernel3 + kernel2
-kernel_c3 = (kernel1 + kernel3)**2. + kernel2
+kernel_c3 = (kernel1 + kernel3) ** 2. + kernel2
 kernel_c4 = kernel1 * kernel3 ** 2. + kernel2
 
-X = th.randn(10,2).double().to(device)
+X = th.randn(4,2).double().to(device)
 res_ker1 = kernel1(X, X)
 res_ker2 = kernel2(X, X)
 res_ker3 = kernel3(X, X)
 
-c1_res = kernel_c1(X, X) + kernel_c1.noise(X, X)
-c2_res = kernel_c2(X, X) + kernel_c2.noise(X, X)
-c3_res = kernel_c3(X, X) + kernel_c3.noise(X, X)
-c4_res = kernel_c4(X, X) + kernel_c4.noise(X, X)
+diag_matrix = th.eye(len(X)).unsqueeze(dim=0).to(device).double()
+c1_res = kernel_c1(X, X) + diag_matrix * kernel_c1.noise(X, X)
+c2_res = kernel_c2(X, X) + diag_matrix * kernel_c2.noise(X, X)
+c3_res = kernel_c3(X, X) + diag_matrix * kernel_c3.noise(X, X)
+c4_res = kernel_c4(X, X) + diag_matrix * kernel_c4.noise(X, X)
 
 c1_gt = res_ker1 * res_ker3 + res_ker2
 c2_gt = res_ker1 + res_ker3 + res_ker2

@@ -8,6 +8,7 @@ to build up new kernels from fundamental kernels.
 to evaluate all the kernels except white kernel. This will be comfortable when implementing the GPs.
 - white noise kernel can't be used in product operation.
 - use get_parameters() to check the compounding operation logic list.
+- softplus was used to guarantee non-negative kernel parameters
 """
 
 from abc import ABC
@@ -17,18 +18,49 @@ from copy import deepcopy
 from itertools import product
 import torch as th
 import torch.nn as nn
+from torch.nn.functional import softplus
 import numpy as np
 from enum import Enum
 from functools import partial
 from typing import Union, Optional
+from aslearn.common_utils.check import RIGHT_SHAPE
 
 device = "cuda" if th.cuda.is_available() else "cpu"
 
+SOFT_PLUS_BETA = 20.
+EPSILON_MARGIN = 1e-10
+THRESHOLD_OUT = softplus(th.tensor(20./SOFT_PLUS_BETA)).item()
 
-def next_n_alpha(s, next_n):
+def next_n_alpha(s:str, next_n:int):
     ''' helper function to get the next n-th uppercase alphabet
     '''
     return chr((ord(s.upper()) + next_n - 65) % 26 + 65)
+
+def lower_bounded_tensor(param:th.nn.Parameter) -> th.nn.Parameter:
+    ''' x = softplus(param) + epsilon, epsilon small positive number
+    '''
+    return softplus(param, beta=SOFT_PLUS_BETA) + EPSILON_MARGIN
+
+def inverse_softplus(x:th.Tensor) -> th.Tensor:
+    ''' inverse softplus function,
+        no need to call very frequently, we can use the THRESHOLD_OUT to check
+        if the softplus function are in the saturation region.
+        
+        the input value shouldn't be too 'negative', otherwise there will be numerical error.
+    '''
+    prior_res = th.zeros_like(x).double().to(device)
+    linear_mask = x > THRESHOLD_OUT
+    prior_res[linear_mask] = x[linear_mask]
+    softplus_mask = th.logical_not(linear_mask)
+    prior_res[softplus_mask] = 1/SOFT_PLUS_BETA * \
+    th.log(th.exp((x[softplus_mask]-EPSILON_MARGIN)*SOFT_PLUS_BETA)-1.)
+    assert not th.any(th.isinf(prior_res)), "the orgininal value is too 'negative' ..."
+    return prior_res
+
+# x = th.tensor([-1, 1, 1e-8, -100,100.]).double().to(device)
+# t = lower_bounded_tensor(x)
+# print(t)
+# print(inverse_softplus(t))
 
 class KernelOperation(Enum):
     ''' enum class to indicate the kernel operations
@@ -199,24 +231,33 @@ class Kernel(nn.Module):
         ''' white noise should be calc independently,
             but I want to integrate it under the same class
             no input, directly return the noise parameters
+            
+            x,y,diag act only as place-holder.
         '''
+        ny = self.output_dim
         total_white_noise = 0.
         for name, param in self.named_parameters():
             if "white" in name:
-                total_white_noise += White.white(param, x, y, diag=diag) # call the white kernel function
+                RIGHT_SHAPE(param, (ny,))
+                total_white_noise += lower_bounded_tensor(param).unsqueeze(dim=1) # (ny,1)
                 
         if type(total_white_noise) == float:
-            return total_white_noise
+            return th.zeros(ny,1).double().to(device)
 
         return total_white_noise
         
-    def guarantee_non_neg_params(self,) -> None:
-        ''' for a compounded kernel, all hyperparameters shouldn't be smaller than 0.
-            After a update step of the kernel class, with no grad let's trim the parameters!
-        '''
-        with th.no_grad():
-            for param in self.parameters():
-                param.clamp_(min=1e-8, max=1e8)
+    # def guarantee_non_neg_params(self, lower_bound:Optional[float]=1e-8) -> bool:
+    #     ''' for a compounded kernel, all hyperparameters shouldn't be smaller than 0.
+    #         After a update step of the kernel class, with no grad let's trim the parameters!
+    #         return a bool value to notice, we have trimmed some parameters
+    #     '''
+    #     clamp_indicator = False
+    #     with th.no_grad():
+    #         for param in self.parameters():
+    #             if th.any(param < lower_bound):
+    #                 clamp_indicator = True
+    #             param.clamp_(min=lower_bound, max=1e6)
+    #     return clamp_indicator
     
     ''' the following operator class will return Compounded kernel class 
     '''
@@ -256,7 +297,7 @@ class Kernel(nn.Module):
             counter += 1
             output += name
             output += " contains parameters: "
-            output += str(tensor.data)
+            output += str(lower_bounded_tensor(tensor).data)
             if counter < param_len:
                 output += "\n"
         return output
@@ -298,7 +339,7 @@ class RBF(Kernel):
     # counter for naming different RBF kernel
     counter = 0
     
-    def __init__(self, dim_in:int, dim_out:int, l:Optional[Union[float,th.Tensor]]=1., 
+    def __init__(self, dim_in:int, dim_out:int, l:Optional[Union[float,th.Tensor]]=5., 
                                                 c:Optional[Union[float,th.Tensor]]=1.) -> None:
         ''' dim_in:     the dimension of input x
             dim_out:    the dimension of output y
@@ -311,6 +352,7 @@ class RBF(Kernel):
         c_param = initialize_param(c, dim_in=None, dim_out=dim_out)
             
         param_t = th.cat([c_param, l_param]).to(device).double()
+        param_t = inverse_softplus(param_t)
         self.name = "rbf{}".format(RBF.counter)
         rbf_param = nn.parameter.Parameter(param_t)
         curr_parameters = Parameters(self.name, rbf_param)
@@ -335,8 +377,9 @@ class RBF(Kernel):
         input_dim = x_dim
         output_dim = int( len(param)//(x_dim+1) )
 
-        c = param[:output_dim]
-        l = param[output_dim:]
+        param_nneg = lower_bounded_tensor(param) # non-negative kernel parameters
+        c = param_nneg[:output_dim]
+        l = param_nneg[output_dim:]
         # sigma = theta[:output_dim].view(output_dim, 1, 1)
         l = l.view(input_dim, output_dim).unsqueeze(0) # (1, nx, ny)
         c = c.view(output_dim, 1, 1) # (ny, 1, 1)
@@ -369,13 +412,13 @@ class RBF(Kernel):
         return RBF.rbf(theta, x, y, diag)
     
 
-## TODO implement Periodic, RQK, feature to kernel 3
+## TODO implement Periodic, RQK, linear (3 more kernels)
 class White(Kernel):
     ''' white noise kernel
     '''
     counter = 0
     
-    def __init__(self, dim_in:int, dim_out:int, c:Optional[Union[float,th.Tensor]]=0.5) -> None:
+    def __init__(self, dim_in:int, dim_out:int, c:Optional[Union[float,th.Tensor]]=1e-2) -> None:
         super().__init__()
         if type(c) == float:
             assert c > 0., "only positive noise!"
@@ -388,6 +431,7 @@ class White(Kernel):
             raise Exception("You must give a feasible noise. or You might have given an integer.")
 
         t = param.double().to(device)
+        t = inverse_softplus(t)
         self.name = "white{}".format(White.counter)
         white_c = nn.parameter.Parameter(t)
         curr_parameters = Parameters(self.name, white_c)
@@ -400,7 +444,8 @@ class White(Kernel):
     @staticmethod
     def white(param:nn.parameter.Parameter, x:th.Tensor, y:th.Tensor, diag:bool) -> th.Tensor:
         output_dim = len(param)
-        c = param
+        param_nneg = lower_bounded_tensor(param)
+        c = param_nneg
         c = c.view(output_dim, 1, 1)
 
         x_len = x.shape[0] if len(x.shape)==2 else x.shape[1]

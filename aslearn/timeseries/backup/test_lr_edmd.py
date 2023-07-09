@@ -2,7 +2,7 @@ from asctr.system import Pendulum
 from aslearn.common_utils.rollouts import collect_rollouts
 import torch as th
 import numpy as np
-from aslearn.parametric.ml_lr import ML_LR
+from aslearn.parametric.mllr import MLLR
 from aslearn.feature.bellcurve import BellCurve
 import matplotlib.pyplot as plt
 device = "cuda" if th.cuda.is_available() else "cpu"
@@ -43,10 +43,10 @@ X_later = th.from_numpy(X_later).to(device).double()
 X_input = th.from_numpy(X_input).to(device).double()
 
 
-trans = ML_LR().fit(X_input, X_later)
+trans = MLLR().fit(X_input, X_later)
 # X_later_pred = trans.predict(X_input)
 # X_later_ori = th.from_numpy(X[:,1:,:].reshape(-1, x_dim)).to(device).double()
-back = ML_LR().fit(X_, X_ori)
+back = MLLR().fit(X_, X_ori)
 
 x_test = Xvali[0]
 x_test = bell(x_test)
