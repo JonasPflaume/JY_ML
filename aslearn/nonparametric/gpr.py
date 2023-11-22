@@ -247,7 +247,7 @@ if __name__ == "__main__":
     print("PASS the evidence tests")
     
     # fit noise function, check the number of white noise
-    X = th.linspace(-2,4,50).reshape(-1,1).double().to(device)
+    X = th.linspace(-2,4,100).reshape(-1,1).double().to(device)
     Y = th.sin(X) + th.randn_like(X) * 0.3
     
     kernel = RBF(1,1) + White(1,1)

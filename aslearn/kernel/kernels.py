@@ -28,7 +28,7 @@ from aslearn.common_utils.check import RIGHT_SHAPE
 device = "cuda" if th.cuda.is_available() else "cpu"
 
 SOFT_PLUS_BETA = 20.
-EPSILON_MARGIN = 1e-10
+EPSILON_MARGIN = 1e-16 # check this value
 THRESHOLD_OUT = softplus(th.tensor(20./SOFT_PLUS_BETA)).item()
 
 def next_n_alpha(s:str, next_n:int):

@@ -8,7 +8,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 device = "cuda" if th.cuda.is_available() else "cpu"
 
-
 class EDMDGPR(ExactGPR):
     
     def __init__(self, kernel: Kernel) -> None:
@@ -20,13 +19,8 @@ class EDMDGPR(ExactGPR):
         VY = evidence_inputs['VY'] # (N, ny)
         N = len(VY)
         gpr_evidence = self.gpr_evidence(X, Y, mean_prior)
-        noise = self.kernel.noise(X, X).repeat(1,N) # (ny, N)
-         # if the regressor or hidden states is already very certain, 
-         # then we don't push the noise of GPR even smaller due to numerical stability
-        # if th.any(noise < 1e-9):
-        #     vi_elbo = gpr_evidence
-        # else:
-        Sc = - 0.5*(VY.T / noise).sum(dim=1)
+        noise = self.kernel.noise(X, X) # (ny, 1)
+        Sc = - 0.5 * ( VY.sum(dim=0) / noise.squeeze(dim=1) )
         vi_elbo = gpr_evidence + Sc.sum(dim=0)
         return vi_elbo
     
@@ -34,7 +28,7 @@ class GPEDMD:
     def __init__(self) -> None:
         pass
     
-    def fit(self, X:th.Tensor, Xvali:th.Tensor, z_dim:int, info_level=1, max_iter=500):
+    def fit(self, X:th.Tensor, Xvali:th.Tensor, z_dim:int, info_level=1, max_iter=2000):
         ''' traj_bundle: (traj_num, traj_len, x_dim)
             max_iter:       maximum iter optimization of the gpr, we don't need it to be very large here.
                             the opt of gpr will be warm-started each iteration.
@@ -47,52 +41,58 @@ class GPEDMD:
         
         # initialization
         Z_bar = th.randn(traj_num, traj_len, z_dim).double().to(device)
-        VZ_bar = 1e-5*th.abs(th.randn(traj_num, traj_len, z_dim)).double().to(device)
+        VZ_bar = th.randn(traj_num, traj_len, z_dim, z_dim)
+        VZ_bar = 1e-2*th.einsum("ijky,ijyb->ijkb", VZ_bar, th.transpose(VZ_bar, dim0=2, dim1=3))
+        VZ_bar = VZ_bar.double().to(device)
         
         for epoch in range(2000):
             
             # fit the gp
             Z_bar_flat = Z_bar.reshape(-1, z_dim)
-            VZ_bar_flat = VZ_bar.reshape(-1, z_dim)
+            VZ_bar_flat = VZ_bar.reshape(-1, z_dim, z_dim)
             X_flat = X.reshape(-1, x_dim)
             
             Z_flat = Z_bar[:,:-1,:].reshape(-1, z_dim)
             Z_plus_flat = Z_bar[:,1:,:].reshape(-1, z_dim)
-            VZ_flat = VZ_bar[:,:-1,:].reshape(-1, z_dim)
-            VZ_plus_flat = VZ_bar[:,1:,:].reshape(-1, z_dim)
+            VZ_flat = VZ_bar[:,:-1,:].reshape(-1, z_dim, z_dim)
+            VZ_plus_flat = VZ_bar[:,1:,:].reshape(-1, z_dim, z_dim)
             
             kernel = RBF(x_dim, z_dim) + White(x_dim, z_dim)
-            # if epoch < 3: # use 3 epoch to initialize the hidden states
-            self.gpr = ExactGPR(kernel=kernel).fit(X_flat, Z_bar_flat, VY=VZ_bar_flat, info_level=info_level, max_iter=max_iter) 
-            # else:
-            #     self.gpr = EDMDGPR(kernel=kernel).fit(X_flat, Z_bar_flat, VY=VZ_bar_flat, info_level=info_level, max_iter=max_iter) 
-            # no need the Sc? Sc term will cause digits overflow, OK seems good without Sc...
+
+            if epoch < 2:
+                self.gpr = ExactGPR(kernel=kernel).fit(X_flat, Z_bar_flat, 
+                                                  VY=th.diagonal(VZ_bar_flat, dim1=1, dim2=2)
+                                                  , info_level=info_level, max_iter=max_iter)
+            else:
+                self.gpr = EDMDGPR(kernel=kernel).fit(X_flat, Z_bar_flat, 
+                                                  VY=th.diagonal(VZ_bar_flat, dim1=1, dim2=2)
+                                                  , info_level=info_level, max_iter=max_iter) 
 
             with th.no_grad():
-                self.trans = MLLR(z_dim, z_dim).fit(Z_flat, Z_plus_flat, SX=VZ_flat, SY=VZ_plus_flat, info_level=0)
-                self.back = MLLR(z_dim, x_dim).fit(Z_bar_flat, X_flat, SX=VZ_bar_flat, info_level=0)
+                self.trans = MLLR().fit(Z_flat, Z_plus_flat, SX=VZ_flat, SY=VZ_plus_flat, info_level=0)
+                self.back = MLLR().fit(Z_bar_flat, X_flat, SX=VZ_bar_flat, info_level=0)
             
             # do state estimation
             with th.no_grad():
                 Z_bar, VZ_bar = self.state_estimation(epoch, X, Z_bar, VZ_bar, info_level)
-
+            print(self.gpr.kernel)
             # validate
             _ = self.validate(epoch, Xvali, info_level)
     
     def state_estimation(self, epoch:int, X:th.Tensor, Z_bar:th.Tensor, VZ_bar:th.Tensor, info_level:bool, 
-                         his_len=200, tolerance=1e-12, penalty_factor=1):
+                         his_len=400, tolerance=1e-12, penalty_factor=1):
         ''' do the state estimation
             X:      (traj_num, traj_len, x_dim)
             Z_bar:  (traj_num, traj_len, z_dim)
-            VZ_bar: (traj_num, traj_len, z_dim)
+            VZ_bar: (traj_num, traj_len, z_dim, z_dim)
             penalty_factor: An important factor to control the penalty to hidden patterns
                             the larger the heavier the penalty will be.
         '''
         x_dim, z_dim = self.gpr.kernel.input_dim, self.gpr.kernel.output_dim
         traj_len = X.shape[1]
         
-        # each states will be visited maximum 20 times in expectation.
-        max_iter_num = traj_len * 20
+        # each states will be visited maximum 50 times in expectation.
+        max_iter_num = traj_len * 50
         traj_num = X.shape[0]
         
         Sigma_r_inv = th.eye(z_dim).double().to(device) * penalty_factor
@@ -118,7 +118,7 @@ class GPEDMD:
         plt.xlabel("time step")
         plt.ylabel("function value")
         plt.tight_layout()
-        plt.savefig("/home/jiayun/Desktop/GPEDMD/iter_{}_post.jpg".format(epoch), dpi=150)
+        plt.savefig("/home/jiayun/Desktop/GPEDMD/iter_{}_post.svg".format(epoch))
         plt.close()
         
         # pre-compute the covariance term
@@ -133,7 +133,7 @@ class GPEDMD:
         
         CovT = th.linalg.cholesky(Sigma_n_inv + beta1 + CT_beta2_C + Sigma_r_inv)
         CovT = th.cholesky_inverse(CovT)
-        
+
         def get_term1(Ef_t):
             term1_res = th.einsum("ij,bjk->bik", Sigma_n_inv, Ef_t.permute(0,2,1))
             return term1_res
@@ -166,7 +166,7 @@ class GPEDMD:
             step_counter += 1
             
             if t == 0:
-                VZ_bar[:,t,:] = th.diagonal(Cov1, dim1=0, dim2=1).unsqueeze(dim=0)
+                VZ_bar[:,t,:,:] = Cov1.unsqueeze(dim=0)
                 
                 term1 = get_term1(Ef[:,t:t+1,:]) # (traj_num,z_dim,1)
                 term2 = get_term2(Z_bar[:,t+1:t+2,:])
@@ -178,7 +178,7 @@ class GPEDMD:
                 Z_bar[:,t,:] = E_z1.unsqueeze(dim=1)
                 
             elif t>0 and t<traj_len-1:
-                VZ_bar[:,t,:] = th.diagonal(Covt, dim1=0, dim2=1).unsqueeze(dim=0)
+                VZ_bar[:,t,:,:] = Covt.unsqueeze(dim=0)
                 
                 term1 = get_term1(Ef[:,t:t+1,:]) # (traj_num,z_dim,1)
                 term2 = get_term2(Z_bar[:,t+1:t+2,:])
@@ -191,7 +191,7 @@ class GPEDMD:
                 Z_bar[:,t,:] = E_z1.unsqueeze(dim=1)
                 
             elif t == traj_len-1:
-                VZ_bar[:,t,:] = th.diagonal(CovT, dim1=0, dim2=1).unsqueeze(dim=0)
+                VZ_bar[:,t,:,:] = CovT.unsqueeze(dim=0)
                 
                 term1 = get_term1(Ef[:,t:t+1,:]) # (traj_num,z_dim,1)
                 term3 = get_term3(X[:,t:t+1,:])
@@ -236,8 +236,8 @@ class GPEDMD:
                 
             for _ in range(step_num):
                 z0 = self.trans.predict(z0)
-                
                 x0 = self.back.predict(z0)
+                
                 if return_std:
                     z0_var = beta1_inv + W @ th.diag(z0_var.squeeze(dim=0)) @ W.T
                     z0_var = th.diagonal(z0_var).unsqueeze(dim=0)
@@ -276,16 +276,15 @@ class GPEDMD:
         low = pred_np - std_np
         plt.fill_between(t, up[:,0], low[:,0], color='b', alpha=0.2)
         plt.fill_between(t, up[:,1], low[:,1], color='c', alpha=0.2)
-        plt.plot(traj.detach().cpu().numpy(), ".r", label="GT")
+        plt.plot(traj.detach().cpu().numpy(), "-.r", label="GT")
         plt.title(f"Iter. {epoch}")
         plt.grid()
         plt.xlabel("time step")
         plt.ylabel("state value")
         plt.tight_layout()
-        plt.savefig("/home/jiayun/Desktop/GPEDMD/iter_{0}_vali_loss_{1:.2f}.jpg".format(epoch, loss.item()), dpi=150)
+        plt.savefig("/home/jiayun/Desktop/GPEDMD/iter_{0}_vali_loss_{1:.2f}.svg".format(epoch, loss.item()))
         plt.close()
         return loss
-        
         
 if __name__ == "__main__":
     # test the gp
@@ -294,7 +293,7 @@ if __name__ == "__main__":
     # VY = th.ones_like(X) * 0.1
 
     # kernel = RBF(1,1) + White(1,1)
-    # gpr = ExpectedGPR(kernel=kernel).fit(X, Y, VY=VY, info_level=1)
+    # gpr = EDMDGPR(kernel=kernel).fit(X, Y, VY=VY, info_level=1)
 
     # print(kernel)   # looks good: white scale \approx 0.2^2 + 0.1
 
@@ -336,4 +335,4 @@ if __name__ == "__main__":
     # X += th.randn_like(X).double().to(device) * 0.1
     Xvali = th.from_numpy(Xvali).double().to(device)
     # Xvali += th.randn_like(Xvali).double().to(device) * 0.1
-    gpedmd = GPEDMD().fit(X, Xvali, 10)
+    gpedmd = GPEDMD().fit(X, Xvali, 5)

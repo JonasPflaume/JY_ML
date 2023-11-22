@@ -40,16 +40,16 @@ class MLLR(Regression):
         self.dim_feature = nx
         
         if SX != None:
-            RIGHT_SHAPE(SX, (N, nx))
+            RIGHT_SHAPE(SX, (N, nx, nx))
             SX = SX.sum(dim=0)
-            XTX = X.T @ X + th.diag(SX)
+            XTX = X.T @ X + SX
         else:
             XTX = X.T @ X
         
         if SY != None:
-            RIGHT_SHAPE(SY, (N, ny))
+            RIGHT_SHAPE(SY, (N, ny, ny))
             SY = SY.sum(dim=0)
-            YTY = Y.T @ Y + th.diag(SY)
+            YTY = Y.T @ Y + SY
         else:
             YTY = Y.T @ Y
             
@@ -104,7 +104,6 @@ class MLLR(Regression):
                 var = th.diag(self.beta_inv).reshape(1,-1)
                 return mean, th.sqrt(var)
             return mean
-        
     
 if __name__ == "__main__":
     import numpy as np
